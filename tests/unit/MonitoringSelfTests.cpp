@@ -118,6 +118,9 @@ int main() {
     Expect(stringNumeric && stringNumeric->events.size() == 1, "numeric-string fields and unknown fields must parse");
     Expect(stringNumeric->events.front().amountUsd.micros == 100'000'001, "USD numeric strings must retain micro-USD precision");
     Expect(stringNumeric->events.front().sanitizedSymbol == "AB", "display symbols must remove control characters");
+    Expect(SanitizeDisplayText("ABC" "\xE2\x80\xAE" "def") == "ABCdef", "display symbols must remove bidirectional formatting characters");
+    Expect(SanitizeDisplayText("A" "\xF0\x28\x8C\x28" "B") == "A((B", "display symbols must discard malformed UTF-8 safely");
+    Expect(SanitizeDisplayText("\xC3\xA9", 1).empty(), "display cap must not split a UTF-8 sequence");
 
     const auto tokenInfo = ParseTokenInfoJson(ReadFixture("token_info_bsc.json"));
     const auto* info = std::get_if<TokenInfo>(&tokenInfo);
