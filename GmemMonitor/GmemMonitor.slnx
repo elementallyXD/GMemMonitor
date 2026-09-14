@@ -9,5 +9,6 @@
   </Project>
   <Project Path="..\src\core\GMemMonitor.Core.vcxproj" Id="5b429a09-22b0-43e9-8abe-799f78a9e7ef" />
   <Project Path="..\tests\unit\GMemMonitor.MonitoringTests.vcxproj" Id="a64556cd-8d17-4c56-99fb-1c1fbd783a6b" />
+  <Project Path="..\tests\process-fixtures\GMemMonitor.ProcessFixtures.vcxproj" Id="9628c452-1253-47d9-8afe-ecf5677f3a2a" />
   <Project Path="..\tools\GmgnContractProbe\GmgnContractProbe.vcxproj" Id="3e4d7c71-9e48-4a1d-9bb9-8297fdf1591f" />
 </Solution>

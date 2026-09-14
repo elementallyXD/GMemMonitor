@@ -15,7 +15,8 @@ namespace {
 }
 
 [[nodiscard]] bool IsBidiFormattingCharacter(const std::uint32_t codePoint) noexcept {
-    return (codePoint >= 0x202AU && codePoint <= 0x202EU) ||
+    return codePoint == 0x061CU || codePoint == 0x200EU || codePoint == 0x200FU ||
+        (codePoint >= 0x202AU && codePoint <= 0x202EU) ||
         (codePoint >= 0x2066U && codePoint <= 0x2069U);
 }
 
