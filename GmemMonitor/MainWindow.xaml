@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="GmemMonitor.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:GmemMonitor"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="GmemMonitor">
+
+    <ScrollViewer>
+        <StackPanel Padding="24" Spacing="16" MaxWidth="760">
+            <TextBlock Text="GMemMonitor" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock Text="Read-only BSC BUY coordination monitor" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <InfoBar x:Name="StatusBar" IsOpen="True" Severity="Warning" Title="Monitoring is unavailable" Message="Live GMGN contract capture is required before monitoring can be enabled. This dashboard does not contact GMGN yet." />
+            <StackPanel Spacing="4"><TextBlock Text="Scope" FontWeight="SemiBold" /><TextBlock Text="Current GMGN account follows (dynamic)" /><TextBlock x:Name="LastPollText" Text="Last successful poll: not yet run" /><TextBlock x:Name="LastTokenText" Text="Last analyzed token: none" /></StackPanel>
+            <Button x:Name="StartStopButton" Content="Monitoring not yet available" IsEnabled="False" HorizontalAlignment="Left" AutomationProperties.Name="Monitoring is not yet available" ToolTipService.ToolTip="The monitoring controller is not connected until the GMGN response contract is verified." />
+            <TextBlock Text="Settings" Style="{StaticResource SubtitleTextBlockStyle}" />
+            <TextBlock Text="Settings can be edited only while monitoring is OFF." TextWrapping="Wrap" />
+            <Grid ColumnSpacing="12" RowSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <StackPanel Grid.Row="0" Grid.Column="0"><TextBlock Text="Poll interval (seconds)" /><TextBox x:Name="PollIntervalBox" Text="20" TextChanged="Settings_TextChanged" /></StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="1"><TextBlock Text="Minimum BUY (USD)" /><TextBox x:Name="MinimumBuyBox" Text="100.00" TextChanged="Settings_TextChanged" /></StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0"><TextBlock Text="Required distinct wallets" /><TextBox x:Name="WalletThresholdBox" Text="5" TextChanged="Settings_TextChanged" /></StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="1"><TextBlock Text="Aggregation window (seconds)" /><TextBox x:Name="WindowBox" Text="60" TextChanged="Settings_TextChanged" /></StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="0"><TextBlock Text="Notification cooldown (minutes)" /><TextBox x:Name="CooldownBox" Text="10" TextChanged="Settings_TextChanged" /></StackPanel>
+            </Grid>
+            <TextBlock x:Name="ValidationText" Foreground="DarkRed" TextWrapping="Wrap" />
+            <TextBlock Text="GMGN authentication is configured externally at %USERPROFILE%\.config\gmgn\.env. This application never displays or edits its contents." TextWrapping="Wrap" />
+        </StackPanel>
+    </ScrollViewer>
+</Window>

@@ -1,0 +1,10 @@
+# Third-party notices (release staging)
+
+This file is incomplete until the pinned Node.js runtime and `gmgn-cli` package are
+actually provisioned for a release. Release staging refuses to run without them.
+
+- gmgn-cli 1.5.7 — MIT; source: https://github.com/GMGNAI/gmgn-skills
+- Windows App SDK and Microsoft dependencies — licensed by Microsoft under their
+  distributed package terms.
+- nlohmann/json, spdlog, and GoogleTest are declared for the project but are not
+  currently bundled because the vcpkg baseline has not been pinned.

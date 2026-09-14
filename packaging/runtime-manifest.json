@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "metadata-only; runtime binaries are not bundled during Phase 01",
+  "node": {
+    "version": "24.12.0",
+    "expected_relative_path": "runtime/node.exe"
+  },
+  "gmgn_cli": {
+    "package": "gmgn-cli",
+    "version": "1.5.7",
+    "repository": "https://github.com/GMGNAI/gmgn-skills",
+    "tarball": "https://registry.npmjs.org/gmgn-cli/-/gmgn-cli-1.5.7.tgz",
+    "integrity": "sha512-vxI0uDlhRL4Rn6tJV3z2VRPGnmKDneA6/WdcwlFvHyUMh6pCClLF4f8Srk1xpoJvb/DhxXk0K/b1cTSA98sNJQ==",
+    "license": "MIT",
+    "expected_relative_entry": "runtime/gmgn-cli/dist/index.js"
+  }
+}

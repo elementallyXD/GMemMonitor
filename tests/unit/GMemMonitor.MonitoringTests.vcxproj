@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <ItemGroup Label="ProjectConfigurations"><ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration><ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
+  <PropertyGroup Label="Globals"><ProjectGuid>{A64556CD-8D17-4C56-99FB-1C1FBD783A6B}</ProjectGuid><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <PropertyGroup Label="Configuration"><ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'"><UseDebugLibraries>true</UseDebugLibraries><Optimization>Disabled</Optimization></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'"><UseDebugLibraries>false</UseDebugLibraries><WholeProgramOptimization>true</WholeProgramOptimization></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup><ClCompile><WarningLevel>Level4</WarningLevel><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>$(ProjectDir)..\..\src\core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile></ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="MonitoringSelfTests.cpp" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\..\src\core\GMemMonitor.Core.vcxproj"><Project>{5B429A09-22B0-43E9-8ABE-799F78A9E7EF}</Project></ProjectReference></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

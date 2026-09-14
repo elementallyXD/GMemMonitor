@@ -1,0 +1,61 @@
+# GMGN credentials and local environment
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Visual Studio and MSBuild
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+*.sdf
+*.opensdf
+*.ipch
+[Dd]ebug/
+[Rr]elease/
+x64/
+ARM64/
+out/
+build/
+artifacts/
+packages/
+GmemMonitor/packages/
+GmemMonitor/Generated Files/
+.cache/
+
+# CMake/vcpkg artifacts used by core tests or dependency restore
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+vcpkg_installed/
+
+# Generated application/runtime data
+config.json
+logs/
+*.log
+runtime/
+dist/
+
+# Test and analysis artifacts
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.dmp
+
+# OS/editor files
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+
+# Ignore development folder
+Documentation/DevelopmentPlan/
