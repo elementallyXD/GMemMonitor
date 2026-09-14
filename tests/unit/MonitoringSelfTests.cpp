@@ -1,6 +1,8 @@
 #include "gmemmonitor/core/Alerts.h"
 #include "gmemmonitor/core/GmgnClient.h"
 #include "gmemmonitor/core/Monitoring.h"
+#include "gmemmonitor/core/Process.h"
+#include "gmemmonitor/core/Settings.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -9,6 +11,9 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <stop_token>
+#include <thread>
+#include <windows.h>
 
 using namespace gmemmonitor::core;
 
@@ -56,6 +61,16 @@ public:
     contents << input.rdbuf();
     return contents.str();
 }
+
+[[nodiscard]] std::filesystem::path ProcessFixturePath() {
+    return ExistingSourceFile().parent_path().parent_path().parent_path() / "GmemMonitor" / "bin" / "x64" / "Debug" / "GMemMonitor.ProcessFixtures.exe";
+}
+
+[[nodiscard]] ProcessResult RunFixture(const std::vector<std::wstring>& arguments, const std::chrono::milliseconds timeout = std::chrono::seconds{2}, const std::size_t stdoutCap = 1024, const std::size_t stderrCap = 1024, const std::stop_token stop = {}) {
+    ProcessRunner runner;
+    const auto executable = ProcessFixturePath();
+    return runner.Run({executable, executable.parent_path(), arguments, timeout, stdoutCap, stderrCap}, stop);
+}
 }
 
 int main() {
@@ -91,6 +106,59 @@ int main() {
     Expect(cooldown.IsActive(Address('a'), steady + std::chrono::seconds(599)), "active cooldown must suppress");
     Expect(!cooldown.IsActive(Address('a'), steady + std::chrono::seconds(600)), "expired cooldown must permit");
 
+    const auto settingsDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-settings-self-test";
+    const auto settingsPath = settingsDirectory / "config.json";
+    std::error_code cleanupError;
+    std::filesystem::remove_all(settingsDirectory, cleanupError);
+    SettingsStore settingsStore(settingsPath);
+    const auto missingSettings = settingsStore.Load();
+    Expect(!missingSettings.warning && missingSettings.settings.pollInterval == std::chrono::seconds{20}, "missing settings must use defaults");
+    AppSettings savedSettings;
+    savedSettings.pollInterval = std::chrono::seconds{30};
+    savedSettings.minimumBuyUsd = {123'456'789};
+    Expect(!settingsStore.Save(savedSettings), "valid non-secret settings must save atomically");
+    const auto reloadedSettings = settingsStore.Load();
+    Expect(!reloadedSettings.warning && reloadedSettings.settings.pollInterval == std::chrono::seconds{30} && reloadedSettings.settings.minimumBuyUsd.micros == 123'456'789, "settings must round-trip exactly");
+    { std::ofstream corrupt(settingsPath, std::ios::binary | std::ios::trunc); corrupt << "{\"schema_version\":999}"; }
+    const auto corruptSettings = settingsStore.Load();
+    Expect(corruptSettings.warning && corruptSettings.settings.pollInterval == std::chrono::seconds{20}, "invalid settings must retain defaults with a warning");
+    Expect(std::filesystem::exists(settingsPath), "invalid settings must be preserved for diagnosis");
+    std::filesystem::remove_all(settingsDirectory, cleanupError);
+
+    Expect(std::filesystem::is_regular_file(ProcessFixturePath()), "process fixture executable must be built");
+    const auto validProcess = RunFixture({L"valid-json"});
+    Expect(validProcess.reason == ProcessTerminationReason::Completed && validProcess.stdoutOutput.text == "{\"ok\":true}\n", "valid fixture JSON must be captured");
+    const auto partialProcess = RunFixture({L"partial-writes"});
+    Expect(partialProcess.reason == ProcessTerminationReason::Completed && partialProcess.stdoutOutput.totalBytes == 128, "partial pipe writes must be captured completely");
+    const auto warningProcess = RunFixture({L"warning"});
+    Expect(warningProcess.reason == ProcessTerminationReason::Completed && warningProcess.stderrOutput.text == "warning\n", "zero-exit warnings must remain separate stderr");
+    const auto nonzeroProcess = RunFixture({L"nonzero"});
+    Expect(nonzeroProcess.reason == ProcessTerminationReason::Completed && nonzeroProcess.exitCode == 7, "non-zero exit must be observable");
+    const auto stdoutOverflow = RunFixture({L"large-stdout"}, std::chrono::seconds{2}, 1024);
+    Expect(stdoutOverflow.reason == ProcessTerminationReason::OutputLimitExceeded && stdoutOverflow.stdoutOutput.truncated, "stdout over the cap must terminate safely");
+    const auto stderrOverflow = RunFixture({L"large-stderr"}, std::chrono::seconds{2}, 1024, 1024);
+    Expect(stderrOverflow.reason == ProcessTerminationReason::OutputLimitExceeded && stderrOverflow.stderrOutput.truncated, "stderr over the cap must terminate safely");
+    const auto timedOutProcess = RunFixture({L"hang"}, std::chrono::milliseconds{100});
+    Expect(timedOutProcess.reason == ProcessTerminationReason::TimedOut, "hung child must time out");
+    std::stop_source cancellation;
+    cancellation.request_stop();
+    const auto cancelledProcess = RunFixture({L"hang"}, std::chrono::seconds{2}, 1024, 1024, cancellation.get_token());
+    Expect(cancelledProcess.reason == ProcessTerminationReason::Cancelled, "pre-cancelled child must stop promptly");
+    const auto processDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-process-self-test";
+    const auto childMarker = processDirectory / "child.pid";
+    std::filesystem::remove_all(processDirectory, cleanupError);
+    std::filesystem::create_directories(processDirectory, cleanupError);
+    const auto spawnedProcess = RunFixture({L"spawn-child", childMarker.wstring()}, std::chrono::milliseconds{300});
+    Expect(spawnedProcess.reason == ProcessTerminationReason::TimedOut, "parent with a spawned child must time out");
+    std::ifstream childPidFile(childMarker);
+    unsigned long childPid{};
+    childPidFile >> childPid;
+    Expect(childPid != 0, "spawned child must report its process identifier");
+    HANDLE child = OpenProcess(SYNCHRONIZE, FALSE, childPid);
+    Expect(!child || WaitForSingleObject(child, 0) == WAIT_OBJECT_0, "Job Object must terminate spawned child processes");
+    if (child) CloseHandle(child);
+    std::filesystem::remove_all(processDirectory, cleanupError);
+
     const std::string followWalletFixture = ReadFollowWalletFixture();
     const auto parsedFixture = ParseFollowWalletPageJson(followWalletFixture);
     const auto* parsedPage = std::get_if<FollowWalletPage>(&parsedFixture);
@@ -118,6 +186,11 @@ int main() {
     Expect(stringNumeric && stringNumeric->events.size() == 1, "numeric-string fields and unknown fields must parse");
     Expect(stringNumeric->events.front().amountUsd.micros == 100'000'001, "USD numeric strings must retain micro-USD precision");
     Expect(stringNumeric->events.front().sanitizedSymbol == "AB", "display symbols must remove control characters");
+    Expect(SanitizeDisplayText("ABC" "\xE2\x80\xAE" "def") == "ABCdef", "display symbols must remove bidirectional formatting characters");
+    Expect(SanitizeDisplayText("A" "\xD8\x9C" "B" "\xE2\x80\x8E" "C" "\xE2\x80\x8F" "D") == "ABCD",
+        "display symbols must remove Arabic letter mark and left-to-right/right-to-left marks");
+    Expect(SanitizeDisplayText("A" "\xF0\x28\x8C\x28" "B") == "A((B", "display symbols must discard malformed UTF-8 safely");
+    Expect(SanitizeDisplayText("\xC3\xA9", 1).empty(), "display cap must not split a UTF-8 sequence");
 
     const auto tokenInfo = ParseTokenInfoJson(ReadFixture("token_info_bsc.json"));
     const auto* info = std::get_if<TokenInfo>(&tokenInfo);

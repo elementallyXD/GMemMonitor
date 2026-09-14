@@ -14,6 +14,41 @@ namespace {
     return -1;
 }
 
+[[nodiscard]] bool IsBidiFormattingCharacter(const std::uint32_t codePoint) noexcept {
+    return codePoint == 0x061CU || codePoint == 0x200EU || codePoint == 0x200FU ||
+        (codePoint >= 0x202AU && codePoint <= 0x202EU) ||
+        (codePoint >= 0x2066U && codePoint <= 0x2069U);
+}
+
+[[nodiscard]] bool DecodeUtf8(const std::string_view value, const std::size_t offset,
+    std::uint32_t& codePoint, std::size_t& byteCount) noexcept {
+    const auto first = static_cast<unsigned char>(value[offset]);
+    if (first < 0x80U) {
+        codePoint = first;
+        byteCount = 1;
+        return true;
+    }
+
+    std::size_t expected{};
+    std::uint32_t decoded{};
+    std::uint32_t minimum{};
+    if ((first & 0xE0U) == 0xC0U) { expected = 2; decoded = first & 0x1FU; minimum = 0x80U; }
+    else if ((first & 0xF0U) == 0xE0U) { expected = 3; decoded = first & 0x0FU; minimum = 0x800U; }
+    else if ((first & 0xF8U) == 0xF0U) { expected = 4; decoded = first & 0x07U; minimum = 0x10000U; }
+    else return false;
+    if (offset + expected > value.size()) return false;
+
+    for (std::size_t index = 1; index < expected; ++index) {
+        const auto next = static_cast<unsigned char>(value[offset + index]);
+        if ((next & 0xC0U) != 0x80U) return false;
+        decoded = (decoded << 6U) | (next & 0x3FU);
+    }
+    if (decoded < minimum || decoded > 0x10FFFFU || (decoded >= 0xD800U && decoded <= 0xDFFFU)) return false;
+    codePoint = decoded;
+    byteCount = expected;
+    return true;
+}
+
 } // namespace
 
 std::optional<EvmAddress> EvmAddress::Parse(const std::string_view text) noexcept {
@@ -88,11 +123,17 @@ std::optional<MoneyUsd> MoneyUsd::Parse(const std::string_view decimal) noexcept
 std::string SanitizeDisplayText(const std::string_view value, const std::size_t maximumBytes) {
     std::string sanitized;
     sanitized.reserve((std::min)(value.size(), maximumBytes));
-    for (const unsigned char character : value) {
-        if (character >= 0x20U && character != 0x7FU) {
-            sanitized.push_back(static_cast<char>(character));
-            if (sanitized.size() == maximumBytes) break;
+    for (std::size_t offset{}; offset < value.size();) {
+        std::uint32_t codePoint{};
+        std::size_t byteCount{};
+        if (!DecodeUtf8(value, offset, codePoint, byteCount)) {
+            ++offset;
+            continue;
         }
+        offset += byteCount;
+        if (codePoint < 0x20U || (codePoint >= 0x7FU && codePoint <= 0x9FU) || IsBidiFormattingCharacter(codePoint)) continue;
+        if (sanitized.size() + byteCount > maximumBytes) break;
+        sanitized.append(value.substr(offset - byteCount, byteCount));
     }
     return sanitized;
 }
