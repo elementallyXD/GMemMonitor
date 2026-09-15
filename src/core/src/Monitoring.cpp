@@ -155,7 +155,7 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
     };
     auto initial = fetch();
     auto initialUpdate = controller_.HandleInitialResult(initial);
-    Publish(initialUpdate);
+    if (!Publish(initialUpdate, stop)) return;
     if (stop.stop_requested() || controller_.State() == MonitoringState::AuthenticationRequired) return;
     std::size_t failures{};
     std::optional<std::chrono::milliseconds> forcedDelay;
@@ -174,7 +174,7 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
         const auto requestStarted = std::chrono::steady_clock::now();
         auto result = fetch();
         const auto update = controller_.HandlePollResult(result);
-        Publish(update);
+        if (!Publish(update, stop)) return;
         if (update.state == MonitoringState::AuthenticationRequired || update.state == MonitoringState::Stopped) return;
         if (update.state == MonitoringState::Monitoring) {
             failures = 0;
@@ -184,15 +184,22 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
     }
 }
 
-void WalletActivityPoller::Publish(const MonitoringUpdate& update) const {
+bool WalletActivityPoller::Publish(const MonitoringUpdate& update, const std::stop_token stop) {
     if (frozenClusterHandler_) {
         for (const auto& cluster : update.frozenClusters) {
-            // The bounded analysis executor owns a copy. If it is saturated, the
-            // status sink still receives the cluster and can present a visible error.
-            static_cast<void>(frozenClusterHandler_(cluster));
+            // Retain the immutable cluster on this worker's stack until a bounded
+            // analysis queue accepts it. This intentionally applies backpressure
+            // rather than silently discarding a qualifying alert under saturation.
+            while (!stop.stop_requested() && !frozenClusterHandler_(cluster)) {
+                std::mutex mutex;
+                std::unique_lock lock(mutex);
+                wake_.wait_for(lock, stop, std::chrono::milliseconds{100}, [] { return false; });
+            }
+            if (stop.stop_requested()) return false;
         }
     }
     if (handler_) handler_(update);
+    return !stop.stop_requested();
 }
 
 bool FrozenClusterQueue::TryEnqueue(FrozenTokenCluster cluster) {

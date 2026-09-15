@@ -4,6 +4,7 @@
 #include "gmemmonitor/core/GmgnClient.h"
 
 #include <condition_variable>
+#include <array>
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -43,7 +44,14 @@ private:
 
 struct IAlertClock { virtual ~IAlertClock() = default; [[nodiscard]] virtual std::chrono::steady_clock::time_point SteadyNow() const = 0; };
 struct INotificationService { virtual ~INotificationService() = default; virtual bool Show(const TokenAlert& alert) = 0; };
-struct AnalysisUpdate final { bool delivered{}; bool suppressedByCooldown{}; std::string diagnostic; std::optional<TokenAlert> alert; };
+struct AnalysisUpdate final {
+    bool delivered{};
+    bool suppressedByCooldown{};
+    bool retryable{};
+    std::string diagnostic;
+    std::optional<TokenAlert> alert;
+    std::optional<std::chrono::seconds> retryAfter;
+};
 
 class TokenAnalysisService final {
 public:
@@ -53,19 +61,32 @@ public:
 private:
     [[nodiscard]] static EnrichmentFacts ToFacts(const TokenInfo& info, const TokenSecurity& security);
     [[nodiscard]] static std::string FailureDiagnostic(const GmgnFailure& failure);
+    [[nodiscard]] static AnalysisUpdate FailureUpdate(const GmgnFailure& failure);
     std::shared_ptr<IGmgnClient> client_; GmgnRequestScheduler& scheduler_; INotificationService& notifications_; IAlertClock& clock_; CooldownManager cooldown_;
 };
 
 class TokenAnalysisExecutor final {
 public:
     static constexpr std::size_t kCapacity = 32;
+    static constexpr std::size_t kMaximumRetryAttempts = 6;
     using UpdateHandler = std::function<void(const AnalysisUpdate&)>;
     TokenAnalysisExecutor(TokenAnalysisService& service, UpdateHandler handler = {}); ~TokenAnalysisExecutor();
     TokenAnalysisExecutor(const TokenAnalysisExecutor&) = delete; TokenAnalysisExecutor& operator=(const TokenAnalysisExecutor&) = delete;
-    [[nodiscard]] bool Start(); [[nodiscard]] bool TrySubmit(FrozenTokenCluster cluster); void Stop() noexcept;
+    [[nodiscard]] bool Start();
+    [[nodiscard]] bool TrySubmit(FrozenTokenCluster cluster);
+    // Applies backpressure instead of discarding a qualifying cluster when the
+    // bounded queue is full. Stop() wakes blocked submitters.
+    [[nodiscard]] bool Submit(FrozenTokenCluster cluster, std::stop_token stop = {});
+    void Stop() noexcept;
 private:
+    struct PendingAnalysis final {
+        FrozenTokenCluster cluster;
+        std::size_t retryAttempts{};
+        std::chrono::steady_clock::time_point notBefore{};
+    };
+    [[nodiscard]] static std::chrono::seconds RetryDelay(std::size_t retryAttempt) noexcept;
     void Run(std::stop_token stop);
-    TokenAnalysisService& service_; UpdateHandler handler_; std::mutex mutex_; std::condition_variable_any wake_; std::deque<FrozenTokenCluster> pending_; std::jthread worker_;
+    TokenAnalysisService& service_; UpdateHandler handler_; std::mutex mutex_; std::condition_variable_any wake_; std::deque<PendingAnalysis> pending_; std::jthread worker_; bool accepting_{};
 };
 
 } // namespace gmemmonitor::core

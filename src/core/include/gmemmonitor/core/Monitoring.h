@@ -105,7 +105,7 @@ public:
 
 private:
     void Run(std::stop_token stop, std::chrono::seconds pollInterval);
-    void Publish(const MonitoringUpdate& update) const;
+    [[nodiscard]] bool Publish(const MonitoringUpdate& update, std::stop_token stop);
 
     std::shared_ptr<IGmgnClient> client_;
     MonitoringController& controller_;
