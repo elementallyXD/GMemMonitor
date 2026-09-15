@@ -52,4 +52,148 @@ std::optional<FrozenTokenCluster> TokenClusterAggregator::FreezeIfQualified(cons
 
 void TokenClusterAggregator::Clear() noexcept { active_.clear(); }
 
+MonitoringController::MonitoringController(IClock& clock) : clock_(clock) {}
+
+bool MonitoringController::Start(const AppSettings& settings) {
+    if (state_ != MonitoringState::Stopped && state_ != MonitoringState::AuthenticationRequired) return false;
+    if (ValidateSettings(settings)) return false;
+    startedAt_ = clock_.UtcNow();
+    deduplicator_.emplace();
+    aggregator_.emplace(ToMonitoringSettings(settings));
+    state_ = MonitoringState::Authenticating;
+    return true;
+}
+
+MonitoringUpdate MonitoringController::HandleInitialPage(const FollowWalletPage& page) {
+    if (state_ != MonitoringState::Authenticating) return {state_, {}, "Initial GMGN feed was not expected."};
+    return ProcessPage(page, true);
+}
+
+MonitoringUpdate MonitoringController::HandleInitialResult(const GmgnResult<FollowWalletPage>& result) {
+    if (const auto* failure = std::get_if<GmgnFailure>(&result)) {
+        if (state_ != MonitoringState::Authenticating) return {state_, {}, "Initial GMGN feed was not expected."};
+        if (failure->code == GmgnFailureCode::Authentication) state_ = MonitoringState::AuthenticationRequired;
+        else if (failure->code != GmgnFailureCode::Cancelled) state_ = MonitoringState::Retrying;
+        return {state_, {}, failure->diagnostic, failure->retryAfter};
+    }
+    return HandleInitialPage(std::get<FollowWalletPage>(result));
+}
+
+MonitoringUpdate MonitoringController::HandlePollResult(const GmgnResult<FollowWalletPage>& result) {
+    if (state_ != MonitoringState::Monitoring && state_ != MonitoringState::Retrying) return {state_, {}, "GMGN feed result was not expected."};
+    if (const auto* failure = std::get_if<GmgnFailure>(&result)) {
+        if (failure->code == GmgnFailureCode::Authentication) state_ = MonitoringState::AuthenticationRequired;
+        else if (failure->code != GmgnFailureCode::Cancelled) state_ = MonitoringState::Retrying;
+        return {state_, {}, failure->diagnostic, failure->retryAfter};
+    }
+    return ProcessPage(std::get<FollowWalletPage>(result), false);
+}
+
+void MonitoringController::Stop() noexcept {
+    deduplicator_.reset();
+    aggregator_.reset();
+    startedAt_.reset();
+    state_ = MonitoringState::Stopped;
+}
+
+MonitoringState MonitoringController::State() const noexcept { return state_; }
+
+MonitoringUpdate MonitoringController::ProcessPage(const FollowWalletPage& page, const bool initial) {
+    std::vector<FrozenTokenCluster> frozen;
+    const auto now = clock_.UtcNow();
+    for (const auto& event : page.events) {
+        if (event.stableKey.empty() || !deduplicator_->InsertIfNew(event.stableKey)) continue;
+        // Old records establish the baseline only; events at the exact start are live.
+        if (initial && event.timestamp < *startedAt_) continue;
+        if (event.timestamp < *startedAt_) continue;
+        if (const auto cluster = aggregator_->Add(event, now)) frozen.push_back(*cluster);
+    }
+    aggregator_->Prune(now);
+    state_ = MonitoringState::Monitoring;
+    return {state_, std::move(frozen), {}};
+}
+
+MonitoringSettings MonitoringController::ToMonitoringSettings(const AppSettings& settings) noexcept {
+    return {settings.minimumBuyUsd, settings.distinctWalletThreshold, settings.aggregationWindow};
+}
+
+WalletActivityPoller::WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler)
+    : client_(std::move(client)), controller_(controller), handler_(std::move(handler)) {}
+
+WalletActivityPoller::~WalletActivityPoller() { Stop(); }
+
+bool WalletActivityPoller::Start(const AppSettings& settings) {
+    if (!client_ || worker_.joinable() || !controller_.Start(settings)) return false;
+    worker_ = std::jthread([this, interval = settings.pollInterval](const std::stop_token stop) { Run(stop, interval); });
+    return true;
+}
+
+void WalletActivityPoller::Stop() noexcept {
+    if (worker_.joinable()) {
+        worker_.request_stop();
+        wake_.notify_all();
+        worker_.join();
+    }
+    controller_.Stop();
+}
+
+std::chrono::milliseconds WalletActivityPoller::RetryDelay(const std::size_t consecutiveFailures, const std::uint32_t jitterBasisPoints) noexcept {
+    constexpr std::array<std::chrono::seconds, 6> delays{std::chrono::seconds{1}, std::chrono::seconds{2}, std::chrono::seconds{4}, std::chrono::seconds{8}, std::chrono::seconds{16}, std::chrono::seconds{30}};
+    const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(delays[(std::min)(consecutiveFailures, delays.size() - 1)]);
+    const auto boundedJitter = (std::min)(jitterBasisPoints, 10'000U);
+    // Jitter is in [75%, 100%] of the documented maximum delay.
+    return maximum * (7'500 + boundedJitter / 4) / 10'000;
+}
+
+void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::seconds pollInterval) {
+    auto initial = client_->FetchFollowWalletBuys(stop);
+    auto initialUpdate = controller_.HandleInitialResult(initial);
+    Publish(initialUpdate);
+    if (stop.stop_requested() || controller_.State() == MonitoringState::AuthenticationRequired) return;
+    std::size_t failures{};
+    std::optional<std::chrono::milliseconds> forcedDelay;
+    if (initialUpdate.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*initialUpdate.retryAfter);
+    while (!stop.stop_requested()) {
+        const bool retrying = controller_.State() == MonitoringState::Retrying;
+        jitterState_ = jitterState_ * 1'664'525U + 1'013'904'223U;
+        const auto delay = forcedDelay.value_or(retrying ? RetryDelay(failures++, jitterState_ % 10'001U) : std::chrono::duration_cast<std::chrono::milliseconds>(pollInterval));
+        forcedDelay.reset();
+        std::mutex mutex;
+        std::unique_lock lock(mutex);
+        if (wake_.wait_for(lock, stop, delay, [] { return false; })) return;
+        if (stop.stop_requested()) return;
+        auto result = client_->FetchFollowWalletBuys(stop);
+        const auto update = controller_.HandlePollResult(result);
+        Publish(update);
+        if (update.state == MonitoringState::AuthenticationRequired || update.state == MonitoringState::Stopped) return;
+        if (update.state == MonitoringState::Monitoring) failures = 0;
+        if (update.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*update.retryAfter);
+    }
+}
+
+void WalletActivityPoller::Publish(const MonitoringUpdate& update) const { if (handler_) handler_(update); }
+
+bool FrozenClusterQueue::TryEnqueue(FrozenTokenCluster cluster) {
+    std::scoped_lock lock(mutex_);
+    if (clusters_.size() == kCapacity) return false;
+    clusters_.push_back(std::move(cluster));
+    wake_.notify_one();
+    return true;
+}
+
+std::optional<FrozenTokenCluster> FrozenClusterQueue::WaitDequeue(const std::stop_token stop) {
+    std::unique_lock lock(mutex_);
+    wake_.wait(lock, stop, [this] { return !clusters_.empty(); });
+    if (stop.stop_requested() || clusters_.empty()) return std::nullopt;
+    FrozenTokenCluster next = std::move(clusters_.front());
+    clusters_.pop_front();
+    return next;
+}
+
+void FrozenClusterQueue::Clear() noexcept {
+    std::scoped_lock lock(mutex_);
+    clusters_.clear();
+    wake_.notify_all();
+}
+
 } // namespace gmemmonitor::core

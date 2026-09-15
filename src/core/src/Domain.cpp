@@ -1,8 +1,14 @@
 #include "gmemmonitor/core/Domain.h"
 
+#define NOMINMAX
+#include <windows.h>
+#include <bcrypt.h>
 #include <algorithm>
 #include <charconv>
 #include <limits>
+#include <string_view>
+
+#pragma comment(lib, "bcrypt.lib")
 
 namespace gmemmonitor::core {
 namespace {
@@ -12,6 +18,25 @@ namespace {
     if (value >= 'a' && value <= 'f') return value - 'a' + 10;
     if (value >= 'A' && value <= 'F') return value - 'A' + 10;
     return -1;
+}
+
+[[nodiscard]] std::string CanonicalDecimal(std::string_view value) {
+    const auto decimal = value.find('.');
+    const auto wholeEnd = decimal == std::string_view::npos ? value.size() : decimal;
+    auto wholeBegin = value.find_first_not_of('0');
+    if (wholeBegin == std::string_view::npos || wholeBegin >= wholeEnd) wholeBegin = wholeEnd - 1;
+    std::string result{value.substr(wholeBegin, wholeEnd - wholeBegin)};
+    if (decimal != std::string_view::npos) {
+        auto fractionEnd = value.size();
+        while (fractionEnd > decimal + 1 && value[fractionEnd - 1] == '0') --fractionEnd;
+        if (fractionEnd > decimal + 1) result.append(value.substr(decimal, fractionEnd - decimal));
+    }
+    return result;
+}
+
+[[nodiscard]] std::string LowerAscii(std::string value) {
+    for (char& character : value) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character - 'A' + 'a');
+    return value;
 }
 
 [[nodiscard]] bool IsBidiFormattingCharacter(const std::uint32_t codePoint) noexcept {
@@ -136,6 +161,42 @@ std::string SanitizeDisplayText(const std::string_view value, const std::size_t 
         sanitized.append(value.substr(offset - byteCount, byteCount));
     }
     return sanitized;
+}
+
+std::string BuildFallbackEventKey(const WalletBuyEvent& event) {
+    const auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(event.timestamp.time_since_epoch()).count();
+    std::string payload;
+    const auto appendField = [&payload](const std::string& value) { payload.append(value); payload.push_back('\0'); };
+    appendField("bsc");
+    appendField(LowerAscii(event.transactionHash));
+    appendField(event.wallet.ToCanonicalString());
+    appendField(event.token.ToCanonicalString());
+    appendField("buy");
+    appendField(std::to_string(timestamp));
+    appendField(CanonicalDecimal(event.baseAmount));
+    payload.append(std::to_string(event.amountUsd.micros));
+    BCRYPT_ALG_HANDLE algorithm{};
+    BCRYPT_HASH_HANDLE hash{};
+    DWORD objectBytes{};
+    DWORD received{};
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0 ||
+        BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&objectBytes), sizeof(objectBytes), &received, 0) != 0) {
+        if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+        return {};
+    }
+    std::vector<std::byte> object(objectBytes);
+    std::array<std::byte, 32> digest{};
+    const NTSTATUS created = BCryptCreateHash(algorithm, &hash, reinterpret_cast<PUCHAR>(object.data()), objectBytes, nullptr, 0, 0);
+    const NTSTATUS hashed = created == 0 ? BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(payload.data())), static_cast<ULONG>(payload.size()), 0) : created;
+    const NTSTATUS finished = hashed == 0 ? BCryptFinishHash(hash, reinterpret_cast<PUCHAR>(digest.data()), static_cast<ULONG>(digest.size()), 0) : hashed;
+    if (hash) BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (finished != 0) return {};
+    constexpr char hex[] = "0123456789abcdef";
+    std::string key{"fallback:"};
+    key.reserve(key.size() + digest.size() * 2);
+    for (const auto byte : digest) { const auto value = std::to_integer<unsigned char>(byte); key.push_back(hex[value >> 4]); key.push_back(hex[value & 0x0F]); }
+    return key;
 }
 
 } // namespace gmemmonitor::core

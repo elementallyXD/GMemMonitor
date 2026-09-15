@@ -47,5 +47,6 @@ struct WalletContribution final { EvmAddress wallet; WalletBuyEvent largestUnexp
 struct FrozenTokenCluster final { EvmAddress token; std::vector<WalletContribution> wallets; std::chrono::system_clock::time_point triggeredAt; };
 
 [[nodiscard]] std::string SanitizeDisplayText(std::string_view value, std::size_t maximumBytes = 64);
+[[nodiscard]] std::string BuildFallbackEventKey(const WalletBuyEvent& event);
 
 } // namespace gmemmonitor::core

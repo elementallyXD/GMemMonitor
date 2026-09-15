@@ -38,6 +38,12 @@ public:
     }
 };
 
+class FakeClock final : public IClock {
+public:
+    std::chrono::system_clock::time_point now{};
+    [[nodiscard]] std::chrono::system_clock::time_point UtcNow() const override { return now; }
+};
+
 [[nodiscard]] std::filesystem::path ExistingSourceFile() {
     return std::filesystem::absolute(std::filesystem::path(__FILE__));
 }
@@ -82,6 +88,33 @@ int main() {
     const auto frozen = aggregator.Add(Event('a', '2', 250'000'000, now, "two"), now);
     Expect(frozen && frozen->wallets.size() == 2, "two wallets must freeze once");
     Expect(!aggregator.Add(Event('a', '3', 120'000'000, now, "after-freeze"), now), "triggering cluster must reset");
+
+    FakeClock controllerClock;
+    controllerClock.now = now;
+    MonitoringController controller(controllerClock);
+    AppSettings controllerSettings;
+    controllerSettings.distinctWalletThreshold = 2;
+    Expect(controller.Start(controllerSettings) && controller.State() == MonitoringState::Authenticating, "controller must begin authenticating with a settings snapshot");
+    FollowWalletPage baseline{{Event('d', '1', 100'000'000, now - std::chrono::seconds{1}, "old"), Event('d', '2', 100'000'000, now, "edge")}};
+    const auto initialUpdate = controller.HandleInitialPage(baseline);
+    Expect(initialUpdate.state == MonitoringState::Monitoring && initialUpdate.frozenClusters.empty(), "old baseline events must not aggregate and exact-start events may enter the session");
+    const auto liveUpdate = controller.HandlePollResult(FollowWalletPage{{Event('d', '3', 100'000'000, now, "live")}});
+    Expect(liveUpdate.frozenClusters.size() == 1, "new distinct-wallet event must freeze a qualifying controller cluster");
+    const auto duplicateUpdate = controller.HandlePollResult(FollowWalletPage{{Event('d', '3', 100'000'000, now, "live")}});
+    Expect(duplicateUpdate.frozenClusters.empty(), "controller must deduplicate session events");
+    const auto retryUpdate = controller.HandlePollResult(GmgnFailure{GmgnFailureCode::TransientNetworkOrServer, "retry"});
+    Expect(retryUpdate.state == MonitoringState::Retrying, "transient GMGN failure must enter retrying state");
+    const auto authenticationUpdate = controller.HandlePollResult(GmgnFailure{GmgnFailureCode::Authentication, "auth"});
+    Expect(authenticationUpdate.state == MonitoringState::AuthenticationRequired, "authentication failure must stop polling for credentials");
+    controller.Stop();
+    Expect(controller.State() == MonitoringState::Stopped, "controller stop must clear session state");
+    Expect(WalletActivityPoller::RetryDelay(0, 10'000) == std::chrono::seconds{1} && WalletActivityPoller::RetryDelay(5, 10'000) == std::chrono::seconds{30} &&
+        WalletActivityPoller::RetryDelay(99, 10'000) == std::chrono::seconds{30} && WalletActivityPoller::RetryDelay(0, 0) == std::chrono::milliseconds{750}, "retry schedule must be bounded and deterministically jittered");
+    FrozenClusterQueue queue;
+    FrozenTokenCluster queuedCluster{Address('f'), {}, now};
+    Expect(queue.TryEnqueue(queuedCluster), "bounded queue must accept a frozen cluster below capacity");
+    const auto dequeuedCluster = queue.WaitDequeue({});
+    Expect(dequeuedCluster && dequeuedCluster->token == Address('f'), "bounded queue must preserve frozen cluster ownership");
 
     TokenClusterAggregator representatives(settings);
     static_cast<void>(representatives.Add(Event('b', '3', 120'000'000, now - std::chrono::seconds(30), "120"), now));
@@ -191,6 +224,11 @@ int main() {
         "display symbols must remove Arabic letter mark and left-to-right/right-to-left marks");
     Expect(SanitizeDisplayText("A" "\xF0\x28\x8C\x28" "B") == "A((B", "display symbols must discard malformed UTF-8 safely");
     Expect(SanitizeDisplayText("\xC3\xA9", 1).empty(), "display cap must not split a UTF-8 sequence");
+    const auto fallbackKeyRecord = ParseFollowWalletPageJson(
+        R"({"list":[{"chain":"bsc","side":"buy","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"100.0","base_amount":"001.2500","price_usd":"1","timestamp":"1700000000"}]})");
+    const auto* fallbackPage = std::get_if<FollowWalletPage>(&fallbackKeyRecord);
+    Expect(fallbackPage && fallbackPage->events.size() == 1 && fallbackPage->events.front().stableKey.rfind("fallback:", 0) == 0,
+        "records without a GMGN id must receive a SHA-256 fallback key");
 
     const auto tokenInfo = ParseTokenInfoJson(ReadFixture("token_info_bsc.json"));
     const auto* info = std::get_if<TokenInfo>(&tokenInfo);
@@ -210,7 +248,7 @@ int main() {
     GmgnCliClient rateLimitedClient({sourceFile, sourceFile}, processRunner);
     const auto firstRateLimit = rateLimitedClient.FetchFollowWalletBuys({});
     const auto* firstFailure = std::get_if<GmgnFailure>(&firstRateLimit);
-    Expect(firstFailure && firstFailure->code == GmgnFailureCode::RateLimited, "HTTP 429 must be classified as rate limited");
+    Expect(firstFailure && firstFailure->code == GmgnFailureCode::RateLimited && firstFailure->retryAfter == std::chrono::seconds{30}, "HTTP 429 must be classified with its bounded retry delay");
     const auto suppressedRetry = rateLimitedClient.FetchFollowWalletBuys({});
     const auto* retryFailure = std::get_if<GmgnFailure>(&suppressedRetry);
     Expect(retryFailure && retryFailure->code == GmgnFailureCode::RateLimited, "active rate limit must suppress retry");

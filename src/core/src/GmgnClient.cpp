@@ -113,7 +113,8 @@ GmgnResult<std::string> GmgnCliClient::RunAndReadJson(const std::vector<std::wst
         std::scoped_lock lock(rateLimitMutex_);
         if (std::chrono::steady_clock::now() < rateLimitBlockedUntil_) {
             return GmgnFailure{GmgnFailureCode::RateLimited,
-                "GMGN rate limit cooldown is active. The client did not start another request."};
+                "GMGN rate limit cooldown is active. The client did not start another request.",
+                std::chrono::duration_cast<std::chrono::seconds>(rateLimitBlockedUntil_ - std::chrono::steady_clock::now()) + std::chrono::seconds{1}};
         }
     }
     ProcessRequest request;
@@ -129,7 +130,7 @@ GmgnResult<std::string> GmgnCliClient::RunAndReadJson(const std::vector<std::wst
         }
     }
     if (result.reason != ProcessTerminationReason::Completed || result.exitCode != 0 || result.stdoutOutput.truncated) {
-        return GmgnFailure{CodeFor(result), DiagnosticFor(result)};
+        return GmgnFailure{CodeFor(result), DiagnosticFor(result), IsRateLimited(result) ? std::optional{EffectiveRateLimitCooldown(result)} : std::nullopt};
     }
     return result.stdoutOutput.text;
 }
