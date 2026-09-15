@@ -190,7 +190,7 @@ bool WalletActivityPoller::Publish(const MonitoringUpdate& update, const std::st
             // Retain the immutable cluster on this worker's stack until a bounded
             // analysis queue accepts it. This intentionally applies backpressure
             // rather than silently discarding a qualifying alert under saturation.
-            while (!stop.stop_requested() && !frozenClusterHandler_(cluster)) {
+            while (!stop.stop_requested() && !frozenClusterHandler_(cluster, stop)) {
                 std::mutex mutex;
                 std::unique_lock lock(mutex);
                 wake_.wait_for(lock, stop, std::chrono::milliseconds{100}, [] { return false; });

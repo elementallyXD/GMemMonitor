@@ -92,7 +92,7 @@ private:
 class WalletActivityPoller final {
 public:
     using UpdateHandler = std::function<void(const MonitoringUpdate&)>;
-    using FrozenClusterHandler = std::function<bool(FrozenTokenCluster)>;
+    using FrozenClusterHandler = std::function<bool(FrozenTokenCluster, std::stop_token)>;
 
     WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler, GmgnRequestScheduler* scheduler = nullptr, FrozenClusterHandler frozenClusterHandler = {});
     ~WalletActivityPoller();

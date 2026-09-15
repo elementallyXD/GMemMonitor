@@ -57,6 +57,7 @@ class TokenAnalysisService final {
 public:
     TokenAnalysisService(std::shared_ptr<IGmgnClient> client, GmgnRequestScheduler& scheduler, INotificationService& notifications, IAlertClock& clock, std::chrono::seconds cooldown = std::chrono::seconds(600));
     [[nodiscard]] AnalysisUpdate Analyze(const FrozenTokenCluster& cluster, std::stop_token stop);
+    void SetCooldownDuration(std::chrono::seconds duration);
     void ClearSession() noexcept;
 private:
     [[nodiscard]] static EnrichmentFacts ToFacts(const TokenInfo& info, const TokenSecurity& security);

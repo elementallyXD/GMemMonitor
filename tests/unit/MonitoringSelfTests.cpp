@@ -225,6 +225,9 @@ int main() {
     SettingsStore settingsStore(settingsPath);
     const auto missingSettings = settingsStore.Load();
     Expect(!missingSettings.warning && missingSettings.settings.pollInterval == std::chrono::seconds{20}, "missing settings must use defaults");
+    AppSettings tooFrequentSettings;
+    tooFrequentSettings.pollInterval = std::chrono::seconds{19};
+    Expect(ValidateSettings(tooFrequentSettings).has_value(), "polling faster than the 20-second GMGN rate-policy floor must be rejected");
     AppSettings savedSettings;
     savedSettings.pollInterval = std::chrono::seconds{30};
     savedSettings.minimumBuyUsd = {123'456'789};

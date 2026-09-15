@@ -13,17 +13,20 @@
         <StackPanel Padding="24" Spacing="16" MaxWidth="760">
             <TextBlock Text="GMemMonitor" Style="{StaticResource TitleTextBlockStyle}" />
             <TextBlock Text="Read-only BSC BUY coordination monitor" Style="{StaticResource SubtitleTextBlockStyle}" />
-            <InfoBar x:Name="StatusBar" IsOpen="True" Severity="Warning" Title="Monitoring is unavailable" Message="Live GMGN contract capture is required before monitoring can be enabled. This dashboard does not contact GMGN yet." />
+            <InfoBar x:Name="StatusBar" IsOpen="True" Severity="Informational" Title="Monitoring is OFF" Message="Configure non-secret settings below. GMGN credentials remain external to this application." />
             <StackPanel Spacing="4"><TextBlock Text="Scope" FontWeight="SemiBold" /><TextBlock Text="Current GMGN account follows (dynamic)" /><TextBlock x:Name="LastPollText" Text="Last successful poll: not yet run" /><TextBlock x:Name="LastTokenText" Text="Last analyzed token: none" /></StackPanel>
-            <Button x:Name="StartStopButton" Content="Monitoring not yet available" IsEnabled="False" HorizontalAlignment="Left" AutomationProperties.Name="Monitoring is not yet available" ToolTipService.ToolTip="The monitoring controller is not connected until the GMGN response contract is verified." />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="StartStopButton" Content="Start monitoring" Click="StartStop_Click" HorizontalAlignment="Left" AutomationProperties.Name="Start monitoring" />
+                <Button x:Name="SaveSettingsButton" Content="Save settings" Click="SaveSettings_Click" AutomationProperties.Name="Save monitoring settings" />
+            </StackPanel>
             <TextBlock Text="Settings" Style="{StaticResource SubtitleTextBlockStyle}" />
             <TextBlock Text="Settings can be edited only while monitoring is OFF." TextWrapping="Wrap" />
             <Grid ColumnSpacing="12" RowSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                <StackPanel Grid.Row="0" Grid.Column="0"><TextBlock Text="Poll interval (seconds)" /><TextBox x:Name="PollIntervalBox" Text="20" TextChanged="Settings_TextChanged" /></StackPanel>
-                <StackPanel Grid.Row="0" Grid.Column="1"><TextBlock Text="Minimum BUY (USD)" /><TextBox x:Name="MinimumBuyBox" Text="100.00" TextChanged="Settings_TextChanged" /></StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="0"><TextBlock Text="Required distinct wallets" /><TextBox x:Name="WalletThresholdBox" Text="5" TextChanged="Settings_TextChanged" /></StackPanel>
-                <StackPanel Grid.Row="1" Grid.Column="1"><TextBlock Text="Aggregation window (seconds)" /><TextBox x:Name="WindowBox" Text="60" TextChanged="Settings_TextChanged" /></StackPanel>
-                <StackPanel Grid.Row="2" Grid.Column="0"><TextBlock Text="Notification cooldown (minutes)" /><TextBox x:Name="CooldownBox" Text="10" TextChanged="Settings_TextChanged" /></StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="0"><TextBlock Text="Poll interval (seconds)" /><TextBox x:Name="PollIntervalBox" Text="20" TextChanged="Settings_TextChanged" AutomationProperties.Name="Poll interval in seconds" /></StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="1"><TextBlock Text="Minimum BUY (USD)" /><TextBox x:Name="MinimumBuyBox" Text="100.00" TextChanged="Settings_TextChanged" AutomationProperties.Name="Minimum qualifying BUY in USD" /></StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="0"><TextBlock Text="Required distinct wallets" /><TextBox x:Name="WalletThresholdBox" Text="5" TextChanged="Settings_TextChanged" AutomationProperties.Name="Required distinct wallets" /></StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="1"><TextBlock Text="Aggregation window (seconds)" /><TextBox x:Name="WindowBox" Text="60" TextChanged="Settings_TextChanged" AutomationProperties.Name="Aggregation window in seconds" /></StackPanel>
+                <StackPanel Grid.Row="2" Grid.Column="0"><TextBlock Text="Notification cooldown (minutes)" /><TextBox x:Name="CooldownBox" Text="10" TextChanged="Settings_TextChanged" AutomationProperties.Name="Notification cooldown in minutes" /></StackPanel>
             </Grid>
             <TextBlock x:Name="ValidationText" Foreground="DarkRed" TextWrapping="Wrap" />
             <TextBlock Text="GMGN authentication is configured externally at %USERPROFILE%\.config\gmgn\.env. This application never displays or edits its contents." TextWrapping="Wrap" />

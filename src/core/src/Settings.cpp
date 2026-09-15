@@ -114,7 +114,7 @@ private:
 } // namespace
 
 std::optional<std::string> ValidateSettings(const AppSettings& settings) noexcept {
-    if (settings.pollInterval < std::chrono::seconds{1} || settings.pollInterval > std::chrono::hours{1}) return "Poll interval must be between 1 second and 1 hour.";
+    if (settings.pollInterval < std::chrono::seconds{20} || settings.pollInterval > std::chrono::hours{1}) return "Poll interval must be between 20 seconds and 1 hour.";
     if (settings.minimumBuyUsd.micros <= 0 || settings.minimumBuyUsd.micros > 1'000'000'000'000'000LL) return "Minimum BUY amount is outside the supported range.";
     if (settings.distinctWalletThreshold < 2 || settings.distinctWalletThreshold > 100) return "Required distinct wallets must be between 2 and 100.";
     if (settings.aggregationWindow < std::chrono::seconds{1} || settings.aggregationWindow > std::chrono::hours{1}) return "Aggregation window must be between 1 second and 1 hour.";

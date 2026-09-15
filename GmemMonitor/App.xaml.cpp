@@ -31,12 +31,21 @@ namespace winrt::GmemMonitor::implementation
 #endif
     }
 
+    App::~App()
+    {
+        gmemmonitor::platform::AppNotificationService().Shutdown();
+    }
+
     /// <summary>
     /// Invoked when the application is launched.
     /// </summary>
     /// <param name="e">Details about the launch request and process.</param>
     void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e)
     {
+        // MainWindow presents a persistent error and prevents monitoring if this fails.
+        if (!gmemmonitor::platform::AppNotificationService().Initialize()) {
+            OutputDebugStringW(L"GMemMonitor: Windows notification registration failed.\n");
+        }
         window = make<MainWindow>();
         window.Activate();
     }

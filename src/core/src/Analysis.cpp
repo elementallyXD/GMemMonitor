@@ -39,6 +39,7 @@ AnalysisUpdate TokenAnalysisService::Analyze(const FrozenTokenCluster& cluster, 
     cooldown_.MarkDelivered(cluster.token, now); return {true, false, false, {}, std::move(alert)};
 }
 void TokenAnalysisService::ClearSession() noexcept { cooldown_.Clear(); }
+void TokenAnalysisService::SetCooldownDuration(const std::chrono::seconds duration) { cooldown_ = CooldownManager(duration); }
 TokenAnalysisExecutor::TokenAnalysisExecutor(TokenAnalysisService& service, UpdateHandler handler) : service_(service), handler_(std::move(handler)) {}
 TokenAnalysisExecutor::~TokenAnalysisExecutor() { Stop(); }
 bool TokenAnalysisExecutor::Start() { std::scoped_lock lock(mutex_); if (worker_.joinable()) return false; accepting_ = true; worker_ = std::jthread([this](const std::stop_token stop) { Run(stop); }); return true; }
