@@ -14,7 +14,9 @@
   <ItemGroup><ClInclude Include="include\gmemmonitor\core\Alerts.h" /><ClInclude Include="include\gmemmonitor\core\Domain.h" /><ClInclude Include="include\gmemmonitor\core\GmgnClient.h" /><ClInclude Include="include\gmemmonitor\core\Monitoring.h" /><ClInclude Include="include\gmemmonitor\core\Process.h" /><ClInclude Include="include\gmemmonitor\core\Settings.h" /><ClCompile Include="src\Alerts.cpp" /><ClCompile Include="src\Domain.cpp" /><ClCompile Include="src\GmgnClient.cpp" /><ClCompile Include="src\GmgnJsonParser.cpp" /><ClCompile Include="src\Monitoring.cpp" /><ClCompile Include="src\ProcessRunnerWin32.cpp" /><ClCompile Include="src\Settings.cpp" /></ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\gmemmonitor\core\Analysis.h" />
+    <ClInclude Include="include\gmemmonitor\core\MonitoringSession.h" />
     <ClCompile Include="src\Analysis.cpp" />
+    <ClCompile Include="src\MonitoringSession.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

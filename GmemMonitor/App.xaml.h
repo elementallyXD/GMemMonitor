@@ -1,12 +1,14 @@
 #pragma once
 
 #include "App.xaml.g.h"
+#include "WindowsNotificationService.h"
 
 namespace winrt::GmemMonitor::implementation
 {
     struct App : AppT<App>
     {
         App();
+        ~App();
 
         void OnLaunched(Microsoft::UI::Xaml::LaunchActivatedEventArgs const&);
 
