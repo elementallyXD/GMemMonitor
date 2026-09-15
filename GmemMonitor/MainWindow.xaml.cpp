@@ -55,6 +55,11 @@ namespace winrt::GmemMonitor::implementation
         InitializeComponent();
         LoadSettings();
         ValidateSettings();
+        if (!gmemmonitor::platform::AppNotificationServiceAvailable()) {
+            StatusBar().Severity(Controls::InfoBarSeverity::Error);
+            StatusBar().Title(L"Notifications unavailable");
+            StatusBar().Message(L"Windows notification registration failed. Monitoring cannot start until notifications are available.");
+        }
     }
 
     MainWindow::~MainWindow() { StopMonitoring(); }
@@ -82,7 +87,6 @@ namespace winrt::GmemMonitor::implementation
         const auto cooldownMinutes = parsePositive(CooldownBox().Text());
         const auto minimum = gmemmonitor::core::MoneyUsd::Parse(to_string(MinimumBuyBox().Text()));
         if (!poll || !wallets || !aggregationWindow || !cooldownMinutes || !minimum || minimum->micros <= 0 ||
-            *wallets > static_cast<std::int64_t>((std::numeric_limits<std::size_t>::max)()) ||
             *cooldownMinutes > (std::numeric_limits<std::int64_t>::max)() / 60) return std::nullopt;
         gmemmonitor::core::AppSettings settings{
             std::chrono::seconds{*poll}, *minimum, static_cast<std::size_t>(*wallets),
@@ -141,6 +145,12 @@ namespace winrt::GmemMonitor::implementation
         if (session_) { StopMonitoring(); return; }
         const auto settings = ReadSettings();
         if (!settings) { ValidateSettings(); return; }
+        if (!gmemmonitor::platform::AppNotificationServiceAvailable()) {
+            StatusBar().Severity(Controls::InfoBarSeverity::Error);
+            StatusBar().Title(L"Monitoring could not start");
+            StatusBar().Message(L"Windows notifications are unavailable. Resolve notification registration before starting monitoring.");
+            return;
+        }
         wchar_t executable[MAX_PATH]{};
         const DWORD length = GetModuleFileNameW(nullptr, executable, static_cast<DWORD>(std::size(executable)));
         if (length == 0 || length >= std::size(executable)) {

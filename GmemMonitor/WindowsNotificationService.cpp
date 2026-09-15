@@ -3,14 +3,41 @@
 
 namespace gmemmonitor::platform {
 
+namespace {
+
+[[nodiscard]] std::string NotificationRiskSummary(const std::vector<gmemmonitor::core::RiskFact>& risks)
+{
+    constexpr std::size_t maximumLength = 360;
+    std::string result;
+    for (const auto& risk : risks) {
+        const auto label = gmemmonitor::core::SanitizeDisplayText(risk.label, 48);
+        const auto value = gmemmonitor::core::SanitizeDisplayText(risk.value, 80);
+        if (label.empty() || value.empty()) continue;
+        const std::string item = label + ": " + value;
+        const std::size_t separatorLength = result.empty() ? 0 : 2;
+        if (item.size() + separatorLength > maximumLength - result.size()) break;
+        if (!result.empty()) result += "; ";
+        result += item;
+    }
+    return result;
+}
+
+} // namespace
+
 WindowsNotificationService& AppNotificationService() noexcept
 {
     static WindowsNotificationService service;
     return service;
 }
 
+bool AppNotificationServiceAvailable() noexcept
+{
+    return AppNotificationService().IsRegistered();
+}
+
 bool WindowsNotificationService::Initialize() noexcept
 {
+    if (registered_) return true;
     try {
         auto const manager = winrt::Microsoft::Windows::AppNotifications::AppNotificationManager::Default();
         invokedToken_ = manager.NotificationInvoked([this](auto const&, auto const& arguments) {
@@ -58,6 +85,9 @@ bool WindowsNotificationService::Show(const gmemmonitor::core::TokenAlert& alert
         auto builder = AppNotificationBuilder();
         builder.AddText(winrt::to_hstring(alert.title));
         builder.AddText(winrt::to_hstring(alert.body));
+        if (const auto risks = NotificationRiskSummary(alert.risks); !risks.empty()) {
+            builder.AddText(winrt::to_hstring(risks));
+        }
         if (!alert.validatedGmgnUrl.empty()) {
             auto button = AppNotificationButton(L"Open in GMGN");
             button.AddArgument(L"action", L"open_gmgn");

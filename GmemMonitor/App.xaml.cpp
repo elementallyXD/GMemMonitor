@@ -42,7 +42,10 @@ namespace winrt::GmemMonitor::implementation
     /// <param name="e">Details about the launch request and process.</param>
     void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e)
     {
-        static_cast<void>(gmemmonitor::platform::AppNotificationService().Initialize());
+        // MainWindow presents a persistent error and prevents monitoring if this fails.
+        if (!gmemmonitor::platform::AppNotificationService().Initialize()) {
+            OutputDebugStringW(L"GMemMonitor: Windows notification registration failed.\n");
+        }
         window = make<MainWindow>();
         window.Activate();
     }

@@ -17,6 +17,7 @@ MonitoringSession::MonitoringSession(std::shared_ptr<IGmgnClient> client, INotif
 MonitoringSession::~MonitoringSession() { Stop(); }
 
 bool MonitoringSession::Start(const AppSettings& settings) {
+    analysisService_.SetCooldownDuration(settings.notificationCooldown);
     if (!analysisExecutor_.Start()) return false;
     if (poller_.Start(settings)) return true;
     analysisExecutor_.Stop();
