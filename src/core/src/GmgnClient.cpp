@@ -32,6 +32,15 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
            ContainsAsciiInsensitive(result.stdoutOutput.text, "rate_limit_exceeded");
 }
 
+[[nodiscard]] bool IsAuthenticationFailure(const ProcessResult& result) {
+    return ContainsAsciiInsensitive(result.stderrOutput.text, "http 401") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "http 403") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "unauthorized") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "forbidden") ||
+           ContainsAsciiInsensitive(result.stdoutOutput.text, "http 401") ||
+           ContainsAsciiInsensitive(result.stdoutOutput.text, "http 403");
+}
+
 [[nodiscard]] std::optional<std::chrono::seconds> RateLimitDelay(const ProcessResult& result) {
     constexpr std::string_view suffix{"s remaining"};
     const std::string_view text{result.stderrOutput.text};
@@ -69,6 +78,7 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
     if (IsRateLimited(result)) {
         return "GMGN rate limited this public IP. The client will suppress further requests during the cooldown.";
     }
+    if (IsAuthenticationFailure(result)) return "GMGN authentication was rejected. Check the external CLI configuration.";
     switch (result.reason) {
     case ProcessTerminationReason::TimedOut: return "GMGN CLI request timed out.";
     case ProcessTerminationReason::Cancelled: return "GMGN CLI request was cancelled.";
@@ -84,6 +94,7 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
     if (IsRateLimited(result)) {
         return GmgnFailureCode::RateLimited;
     }
+    if (IsAuthenticationFailure(result)) return GmgnFailureCode::Authentication;
     switch (result.reason) {
     case ProcessTerminationReason::TimedOut: return GmgnFailureCode::Timeout;
     case ProcessTerminationReason::Cancelled: return GmgnFailureCode::Cancelled;

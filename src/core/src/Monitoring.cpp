@@ -146,27 +146,34 @@ std::chrono::milliseconds WalletActivityPoller::RetryDelay(const std::size_t con
 }
 
 void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::seconds pollInterval) {
+    const auto initialStarted = std::chrono::steady_clock::now();
     auto initial = client_->FetchFollowWalletBuys(stop);
     auto initialUpdate = controller_.HandleInitialResult(initial);
     Publish(initialUpdate);
     if (stop.stop_requested() || controller_.State() == MonitoringState::AuthenticationRequired) return;
     std::size_t failures{};
     std::optional<std::chrono::milliseconds> forcedDelay;
+    auto nextHealthyDeadline = initialStarted + pollInterval;
     if (initialUpdate.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*initialUpdate.retryAfter);
     while (!stop.stop_requested()) {
         const bool retrying = controller_.State() == MonitoringState::Retrying;
         jitterState_ = jitterState_ * 1'664'525U + 1'013'904'223U;
-        const auto delay = forcedDelay.value_or(retrying ? RetryDelay(failures++, jitterState_ % 10'001U) : std::chrono::duration_cast<std::chrono::milliseconds>(pollInterval));
+        const auto healthyDelay = std::chrono::duration_cast<std::chrono::milliseconds>((std::max)(nextHealthyDeadline - std::chrono::steady_clock::now(), std::chrono::steady_clock::duration::zero()));
+        const auto delay = forcedDelay.value_or(retrying ? RetryDelay(failures++, jitterState_ % 10'001U) : healthyDelay);
         forcedDelay.reset();
         std::mutex mutex;
         std::unique_lock lock(mutex);
         if (wake_.wait_for(lock, stop, delay, [] { return false; })) return;
         if (stop.stop_requested()) return;
+        const auto requestStarted = std::chrono::steady_clock::now();
         auto result = client_->FetchFollowWalletBuys(stop);
         const auto update = controller_.HandlePollResult(result);
         Publish(update);
         if (update.state == MonitoringState::AuthenticationRequired || update.state == MonitoringState::Stopped) return;
-        if (update.state == MonitoringState::Monitoring) failures = 0;
+        if (update.state == MonitoringState::Monitoring) {
+            failures = 0;
+            nextHealthyDeadline = requestStarted + pollInterval;
+        }
         if (update.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*update.retryAfter);
     }
 }

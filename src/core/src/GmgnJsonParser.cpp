@@ -315,8 +315,9 @@ private:
 
     WalletBuyEvent parsed;
     if (const JsonValue* id = FindUnique(record, "id")) {
-        if (!StrictString(id, &parsed.gmgnRecordId) || parsed.gmgnRecordId.size() > 512) return false;
-        parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
+        if (id->type != JsonValue::Type::String || id->scalar.size() > 512) return false;
+        parsed.gmgnRecordId = id->scalar;
+        if (!parsed.gmgnRecordId.empty()) parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
     }
     if (!ParseTimestamp(FindUnique(record, "timestamp"), &parsed.timestamp)) return false;
 

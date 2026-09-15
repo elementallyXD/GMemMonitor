@@ -229,6 +229,11 @@ int main() {
     const auto* fallbackPage = std::get_if<FollowWalletPage>(&fallbackKeyRecord);
     Expect(fallbackPage && fallbackPage->events.size() == 1 && fallbackPage->events.front().stableKey.rfind("fallback:", 0) == 0,
         "records without a GMGN id must receive a SHA-256 fallback key");
+    const auto emptyIdFallbackRecord = ParseFollowWalletPageJson(
+        R"({"list":[{"id":"","chain":"bsc","side":"buy","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"100","base_amount":".5","price_usd":"1","timestamp":"1700000000"}]})");
+    const auto* emptyIdPage = std::get_if<FollowWalletPage>(&emptyIdFallbackRecord);
+    Expect(emptyIdPage && emptyIdPage->events.size() == 1 && emptyIdPage->events.front().stableKey.rfind("fallback:", 0) == 0,
+        "empty GMGN ids and leading-dot decimals must use a safe fallback key");
 
     const auto tokenInfo = ParseTokenInfoJson(ReadFixture("token_info_bsc.json"));
     const auto* info = std::get_if<TokenInfo>(&tokenInfo);
@@ -253,6 +258,16 @@ int main() {
     const auto* retryFailure = std::get_if<GmgnFailure>(&suppressedRetry);
     Expect(retryFailure && retryFailure->code == GmgnFailureCode::RateLimited, "active rate limit must suppress retry");
     Expect(processRunner->callCount == 1, "active rate limit must not start a second process");
+
+    processRunner->result = {};
+    processRunner->result.reason = ProcessTerminationReason::Completed;
+    processRunner->result.exitCode = 1;
+    processRunner->result.stderrOutput.text = "HTTP 401 unauthorized";
+    GmgnCliClient authenticationClient({sourceFile, sourceFile}, processRunner);
+    const auto authenticationFailure = authenticationClient.FetchFollowWalletBuys({});
+    const auto* classifiedAuthenticationFailure = std::get_if<GmgnFailure>(&authenticationFailure);
+    Expect(classifiedAuthenticationFailure && classifiedAuthenticationFailure->code == GmgnFailureCode::Authentication,
+        "CLI HTTP 401 must stop monitoring as an authentication failure");
 
     processRunner->result = {};
     processRunner->result.reason = ProcessTerminationReason::Completed;

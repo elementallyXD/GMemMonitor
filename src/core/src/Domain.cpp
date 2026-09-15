@@ -23,9 +23,14 @@ namespace {
 [[nodiscard]] std::string CanonicalDecimal(std::string_view value) {
     const auto decimal = value.find('.');
     const auto wholeEnd = decimal == std::string_view::npos ? value.size() : decimal;
-    auto wholeBegin = value.find_first_not_of('0');
-    if (wholeBegin == std::string_view::npos || wholeBegin >= wholeEnd) wholeBegin = wholeEnd - 1;
-    std::string result{value.substr(wholeBegin, wholeEnd - wholeBegin)};
+    std::string result;
+    if (wholeEnd == 0) {
+        result = "0";
+    } else {
+        auto wholeBegin = value.find_first_not_of('0');
+        if (wholeBegin == std::string_view::npos || wholeBegin >= wholeEnd) wholeBegin = wholeEnd - 1;
+        result.assign(value.substr(wholeBegin, wholeEnd - wholeBegin));
+    }
     if (decimal != std::string_view::npos) {
         auto fractionEnd = value.size();
         while (fractionEnd > decimal + 1 && value[fractionEnd - 1] == '0') --fractionEnd;
