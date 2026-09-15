@@ -16,6 +16,7 @@ struct EnrichmentFacts final {
     std::optional<bool> renounced;
     std::optional<std::string> buyTax;
     std::optional<std::string> sellTax;
+    std::optional<std::string> lockedRatio;
     std::string gmgnLink;
 };
 struct TokenAlert final {

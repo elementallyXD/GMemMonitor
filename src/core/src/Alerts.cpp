@@ -17,15 +17,14 @@ namespace {
 }
 
 std::optional<std::string> ValidateGmgnUrl(const std::string_view value) {
-    constexpr std::string_view prefix{"https://gmgn.ai"};
-    if (value.size() < prefix.size()) return std::nullopt;
-    for (std::size_t index = 0; index < prefix.size(); ++index) {
-        if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[index]))) != prefix[index]) return std::nullopt;
-    }
-    if (value.size() == prefix.size()) return std::string(value);
-    const char separator = value[prefix.size()];
-    if (separator != '/' && separator != '?') return std::nullopt;
-    if (value.find('@') != std::string_view::npos || value.find('\\') != std::string_view::npos || value.find_first_of("\r\n\0") != std::string_view::npos) return std::nullopt;
+    constexpr std::string_view scheme{"https://"};
+    if (value.size() <= scheme.size() || !std::equal(scheme.begin(), scheme.end(), value.begin(), [](const char left, const char right) { return left == std::tolower(static_cast<unsigned char>(right)); })) return std::nullopt;
+    if (value.find_first_of("\r\n\\\0") != std::string_view::npos) return std::nullopt;
+    const auto authorityEnd = value.find_first_of("/?#", scheme.size());
+    const auto authority = value.substr(scheme.size(), authorityEnd - scheme.size());
+    if (authority.empty() || authority.find('@') != std::string_view::npos || authority.find(':') != std::string_view::npos) return std::nullopt;
+    if (authority.size() != 7 || !std::equal(authority.begin(), authority.end(), "gmgn.ai", [](const char left, const char right) { return std::tolower(static_cast<unsigned char>(left)) == right; })) return std::nullopt;
+    for (std::size_t index = authorityEnd; index != std::string_view::npos && index < value.size(); ++index) if (value[index] == '%' && (index + 2 >= value.size() || !std::isxdigit(static_cast<unsigned char>(value[index + 1])) || !std::isxdigit(static_cast<unsigned char>(value[index + 2])))) return std::nullopt;
     return std::string(value);
 }
 
@@ -34,7 +33,7 @@ TokenAlert ComposeAlert(const FrozenTokenCluster& cluster, const std::string_vie
     if (alert.sanitizedSymbol.empty()) alert.sanitizedSymbol = cluster.token.ToCanonicalString().substr(0, 10) + "…";
     alert.qualifyingWallets = cluster.wallets.size();
     for (const auto& wallet : cluster.wallets) if (wallet.largestUnexpiredBuy.amountUsd.micros > alert.largestQualifyingBuy.micros) alert.largestQualifyingBuy = wallet.largestUnexpiredBuy.amountUsd;
-    alert.risks = {BoolFact("GMGN reports honeypot", facts.honeypot), BoolFact("Contract source verified", facts.verified), BoolFact("Ownership renounced", facts.renounced), {"Buy tax", facts.buyTax.value_or("unavailable"), facts.buyTax.has_value()}, {"Sell tax", facts.sellTax.value_or("unavailable"), facts.sellTax.has_value()}};
+    alert.risks = {BoolFact("GMGN reports honeypot", facts.honeypot), BoolFact("Contract source verified", facts.verified), BoolFact("Ownership renounced", facts.renounced), {"Buy tax", facts.buyTax.value_or("unavailable"), facts.buyTax.has_value()}, {"Sell tax", facts.sellTax.value_or("unavailable"), facts.sellTax.has_value()}, {"Liquidity locked ratio", facts.lockedRatio.value_or("unavailable"), facts.lockedRatio.has_value()}};
     if (const auto link = ValidateGmgnUrl(facts.gmgnLink)) alert.validatedGmgnUrl = *link;
     alert.title = alert.sanitizedSymbol + " — coordinated BUY activity";
     alert.body = std::to_string(alert.qualifyingWallets) + " followed wallets bought; largest qualifying BUY " + Usd(alert.largestQualifyingBuy);

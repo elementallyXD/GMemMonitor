@@ -1,4 +1,5 @@
 #include "gmemmonitor/core/Alerts.h"
+#include "gmemmonitor/core/Analysis.h"
 #include "gmemmonitor/core/GmgnClient.h"
 #include "gmemmonitor/core/Monitoring.h"
 #include "gmemmonitor/core/Process.h"
@@ -42,6 +43,30 @@ class FakeClock final : public IClock {
 public:
     std::chrono::system_clock::time_point now{};
     [[nodiscard]] std::chrono::system_clock::time_point UtcNow() const override { return now; }
+};
+
+class FakeAlertClock final : public IAlertClock {
+public:
+    std::chrono::steady_clock::time_point now{};
+    [[nodiscard]] std::chrono::steady_clock::time_point SteadyNow() const override { return now; }
+};
+
+class FakeNotificationService final : public INotificationService {
+public:
+    bool accept{true};
+    std::vector<TokenAlert> alerts;
+    bool Show(const TokenAlert& alert) override { if (accept) alerts.push_back(alert); return accept; }
+};
+
+class FakeEnrichmentClient final : public IGmgnClient {
+public:
+    TokenInfo info;
+    GmgnResult<TokenSecurity> security;
+    std::size_t infoCalls{};
+    std::size_t securityCalls{};
+    GmgnResult<FollowWalletPage> FetchFollowWalletBuys(std::stop_token) override { return FollowWalletPage{}; }
+    GmgnResult<TokenInfo> FetchTokenInfo(const EvmAddress&, std::stop_token) override { ++infoCalls; return info; }
+    GmgnResult<TokenSecurity> FetchTokenSecurity(const EvmAddress&, std::stop_token) override { ++securityCalls; return security; }
 };
 
 [[nodiscard]] std::filesystem::path ExistingSourceFile() {
@@ -138,6 +163,36 @@ int main() {
     cooldown.MarkDelivered(Address('a'), steady);
     Expect(cooldown.IsActive(Address('a'), steady + std::chrono::seconds(599)), "active cooldown must suppress");
     Expect(!cooldown.IsActive(Address('a'), steady + std::chrono::seconds(600)), "expired cooldown must permit");
+
+    FakeAlertClock alertClock;
+    FakeNotificationService notifications;
+    auto enrichmentClient = std::make_shared<FakeEnrichmentClient>();
+    const FrozenTokenCluster enrichmentCluster{Address('a'), {{Address('1'), Event('a', '1', 120'000'000, now, "enrichment-a")}, {Address('2'), Event('a', '2', 250'000'000, now, "enrichment-b")}}, now};
+    enrichmentClient->info = {Address('a'), "GOOD", "https://gmgn.ai/bsc/token/example", "0.8"};
+    enrichmentClient->security = TokenSecurity{Address('a'), false, false, std::nullopt, "1", "2"};
+    GmgnRequestScheduler scheduler;
+    TokenAnalysisService analysis(enrichmentClient, scheduler, notifications, alertClock);
+    const auto enriched = analysis.Analyze(enrichmentCluster, {});
+    Expect(enriched.delivered && enriched.alert && notifications.alerts.size() == 1 && enriched.alert->largestQualifyingBuy.micros == 250'000'000,
+        "required token info and security must produce one complete alert");
+    Expect(enriched.alert->validatedGmgnUrl == "https://gmgn.ai/bsc/token/example" && enriched.alert->risks[2].value == "unavailable",
+        "validated GMGN links and unavailable risk facts must remain distinct");
+    const auto cooldownSuppressed = analysis.Analyze(enrichmentCluster, {});
+    Expect(cooldownSuppressed.suppressedByCooldown && enrichmentClient->infoCalls == 2 && enrichmentClient->securityCalls == 2,
+        "cooldown must run after required enrichment rather than suppressing GMGN analysis");
+    alertClock.now += std::chrono::seconds{600};
+    const auto afterCooldown = analysis.Analyze(enrichmentCluster, {});
+    Expect(afterCooldown.delivered && notifications.alerts.size() == 2, "expired cooldown must permit a later independent cluster");
+    notifications.accept = false;
+    analysis.ClearSession();
+    const auto rejectedDelivery = analysis.Analyze(enrichmentCluster, {});
+    notifications.accept = true;
+    const auto retryAfterRejectedDelivery = analysis.Analyze(enrichmentCluster, {});
+    Expect(!rejectedDelivery.delivered && retryAfterRejectedDelivery.delivered, "failed notification delivery must not start a cooldown");
+    enrichmentClient->security = GmgnFailure{GmgnFailureCode::MalformedJson, "malformed"};
+    analysis.ClearSession();
+    const auto partial = analysis.Analyze(enrichmentCluster, {});
+    Expect(!partial.delivered && !partial.alert && notifications.alerts.size() == 3, "missing required security data must not produce a partial alert");
 
     const auto settingsDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-settings-self-test";
     const auto settingsPath = settingsDirectory / "config.json";

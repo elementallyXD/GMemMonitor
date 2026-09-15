@@ -1,4 +1,5 @@
 #include "gmemmonitor/core/Monitoring.h"
+#include "gmemmonitor/core/Analysis.h"
 
 #include <algorithm>
 
@@ -117,8 +118,8 @@ MonitoringSettings MonitoringController::ToMonitoringSettings(const AppSettings&
     return {settings.minimumBuyUsd, settings.distinctWalletThreshold, settings.aggregationWindow};
 }
 
-WalletActivityPoller::WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler)
-    : client_(std::move(client)), controller_(controller), handler_(std::move(handler)) {}
+WalletActivityPoller::WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler, GmgnRequestScheduler* scheduler, FrozenClusterHandler frozenClusterHandler)
+    : client_(std::move(client)), controller_(controller), handler_(std::move(handler)), scheduler_(scheduler), frozenClusterHandler_(std::move(frozenClusterHandler)) {}
 
 WalletActivityPoller::~WalletActivityPoller() { Stop(); }
 
@@ -147,7 +148,12 @@ std::chrono::milliseconds WalletActivityPoller::RetryDelay(const std::size_t con
 
 void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::seconds pollInterval) {
     const auto initialStarted = std::chrono::steady_clock::now();
-    auto initial = client_->FetchFollowWalletBuys(stop);
+    const auto fetch = [this, stop]() -> GmgnResult<FollowWalletPage> {
+        if (!scheduler_) return client_->FetchFollowWalletBuys(stop);
+        const auto permit = scheduler_->Acquire(GmgnRequestScheduler::Priority::Feed, stop);
+        return permit ? client_->FetchFollowWalletBuys(stop) : GmgnFailure{GmgnFailureCode::Cancelled, "GMGN feed request was cancelled before admission."};
+    };
+    auto initial = fetch();
     auto initialUpdate = controller_.HandleInitialResult(initial);
     Publish(initialUpdate);
     if (stop.stop_requested() || controller_.State() == MonitoringState::AuthenticationRequired) return;
@@ -166,7 +172,7 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
         if (wake_.wait_for(lock, stop, delay, [] { return false; })) return;
         if (stop.stop_requested()) return;
         const auto requestStarted = std::chrono::steady_clock::now();
-        auto result = client_->FetchFollowWalletBuys(stop);
+        auto result = fetch();
         const auto update = controller_.HandlePollResult(result);
         Publish(update);
         if (update.state == MonitoringState::AuthenticationRequired || update.state == MonitoringState::Stopped) return;
@@ -178,7 +184,16 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
     }
 }
 
-void WalletActivityPoller::Publish(const MonitoringUpdate& update) const { if (handler_) handler_(update); }
+void WalletActivityPoller::Publish(const MonitoringUpdate& update) const {
+    if (frozenClusterHandler_) {
+        for (const auto& cluster : update.frozenClusters) {
+            // The bounded analysis executor owns a copy. If it is saturated, the
+            // status sink still receives the cluster and can present a visible error.
+            static_cast<void>(frozenClusterHandler_(cluster));
+        }
+    }
+    if (handler_) handler_(update);
+}
 
 bool FrozenClusterQueue::TryEnqueue(FrozenTokenCluster cluster) {
     std::scoped_lock lock(mutex_);

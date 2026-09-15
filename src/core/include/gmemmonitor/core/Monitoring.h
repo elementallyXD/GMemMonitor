@@ -19,6 +19,8 @@
 
 namespace gmemmonitor::core {
 
+class GmgnRequestScheduler;
+
 enum class MonitoringState { Stopped, Authenticating, Monitoring, Retrying, AuthenticationRequired };
 
 struct IClock {
@@ -90,8 +92,9 @@ private:
 class WalletActivityPoller final {
 public:
     using UpdateHandler = std::function<void(const MonitoringUpdate&)>;
+    using FrozenClusterHandler = std::function<bool(FrozenTokenCluster)>;
 
-    WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler);
+    WalletActivityPoller(std::shared_ptr<IGmgnClient> client, MonitoringController& controller, UpdateHandler handler, GmgnRequestScheduler* scheduler = nullptr, FrozenClusterHandler frozenClusterHandler = {});
     ~WalletActivityPoller();
     WalletActivityPoller(const WalletActivityPoller&) = delete;
     WalletActivityPoller& operator=(const WalletActivityPoller&) = delete;
@@ -107,6 +110,8 @@ private:
     std::shared_ptr<IGmgnClient> client_;
     MonitoringController& controller_;
     UpdateHandler handler_;
+    GmgnRequestScheduler* scheduler_{};
+    FrozenClusterHandler frozenClusterHandler_;
     std::jthread worker_;
     std::condition_variable_any wake_;
     std::uint32_t jitterState_{0x9E3779B9U};

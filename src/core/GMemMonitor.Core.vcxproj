@@ -12,5 +12,9 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup><ClCompile><WarningLevel>Level4</WarningLevel><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp20</LanguageStandard><AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ClCompile></ItemDefinitionGroup>
   <ItemGroup><ClInclude Include="include\gmemmonitor\core\Alerts.h" /><ClInclude Include="include\gmemmonitor\core\Domain.h" /><ClInclude Include="include\gmemmonitor\core\GmgnClient.h" /><ClInclude Include="include\gmemmonitor\core\Monitoring.h" /><ClInclude Include="include\gmemmonitor\core\Process.h" /><ClInclude Include="include\gmemmonitor\core\Settings.h" /><ClCompile Include="src\Alerts.cpp" /><ClCompile Include="src\Domain.cpp" /><ClCompile Include="src\GmgnClient.cpp" /><ClCompile Include="src\GmgnJsonParser.cpp" /><ClCompile Include="src\Monitoring.cpp" /><ClCompile Include="src\ProcessRunnerWin32.cpp" /><ClCompile Include="src\Settings.cpp" /></ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\gmemmonitor\core\Analysis.h" />
+    <ClCompile Include="src\Analysis.cpp" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
