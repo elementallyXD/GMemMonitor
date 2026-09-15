@@ -315,8 +315,9 @@ private:
 
     WalletBuyEvent parsed;
     if (const JsonValue* id = FindUnique(record, "id")) {
-        if (!StrictString(id, &parsed.gmgnRecordId) || parsed.gmgnRecordId.size() > 512) return false;
-        parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
+        if (id->type != JsonValue::Type::String || id->scalar.size() > 512) return false;
+        parsed.gmgnRecordId = id->scalar;
+        if (!parsed.gmgnRecordId.empty()) parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
     }
     if (!ParseTimestamp(FindUnique(record, "timestamp"), &parsed.timestamp)) return false;
 
@@ -326,6 +327,10 @@ private:
     parsed.baseAmount = std::move(baseAmount);
     parsed.priceUsd = std::move(priceUsd);
     parsed.transactionHash = std::move(transactionHash);
+    if (parsed.stableKey.empty()) {
+        parsed.stableKey = BuildFallbackEventKey(parsed);
+        if (parsed.stableKey.empty()) return false;
+    }
     if (const JsonValue* baseToken = FindUnique(record, "base_token"); baseToken && baseToken->type == JsonValue::Type::Object) {
         std::string symbol;
         if (const JsonValue* value = FindUnique(*baseToken, "symbol"); value && StrictString(value, &symbol)) {

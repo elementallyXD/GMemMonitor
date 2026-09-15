@@ -14,7 +14,7 @@ namespace gmemmonitor::core {
 
 enum class GmgnFailureCode { Authentication, RateLimited, Timeout, Cancelled, ExecutableMissingOrInvalid, ProcessStart, NonZeroExit, OutputLimitExceeded, MalformedJson, UnsupportedSchema, TransientNetworkOrServer };
 
-struct GmgnFailure final { GmgnFailureCode code{}; std::string diagnostic; };
+struct GmgnFailure final { GmgnFailureCode code{}; std::string diagnostic; std::optional<std::chrono::seconds> retryAfter; };
 struct FollowWalletPage final {
     std::vector<WalletBuyEvent> events;
     std::optional<std::string> nextPageToken;

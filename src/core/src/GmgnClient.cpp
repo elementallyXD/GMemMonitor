@@ -32,6 +32,15 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
            ContainsAsciiInsensitive(result.stdoutOutput.text, "rate_limit_exceeded");
 }
 
+[[nodiscard]] bool IsAuthenticationFailure(const ProcessResult& result) {
+    return ContainsAsciiInsensitive(result.stderrOutput.text, "http 401") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "http 403") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "unauthorized") ||
+           ContainsAsciiInsensitive(result.stderrOutput.text, "forbidden") ||
+           ContainsAsciiInsensitive(result.stdoutOutput.text, "http 401") ||
+           ContainsAsciiInsensitive(result.stdoutOutput.text, "http 403");
+}
+
 [[nodiscard]] std::optional<std::chrono::seconds> RateLimitDelay(const ProcessResult& result) {
     constexpr std::string_view suffix{"s remaining"};
     const std::string_view text{result.stderrOutput.text};
@@ -69,6 +78,7 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
     if (IsRateLimited(result)) {
         return "GMGN rate limited this public IP. The client will suppress further requests during the cooldown.";
     }
+    if (IsAuthenticationFailure(result)) return "GMGN authentication was rejected. Check the external CLI configuration.";
     switch (result.reason) {
     case ProcessTerminationReason::TimedOut: return "GMGN CLI request timed out.";
     case ProcessTerminationReason::Cancelled: return "GMGN CLI request was cancelled.";
@@ -84,6 +94,7 @@ constexpr std::chrono::seconds kRateLimitSafetyMargin{2};
     if (IsRateLimited(result)) {
         return GmgnFailureCode::RateLimited;
     }
+    if (IsAuthenticationFailure(result)) return GmgnFailureCode::Authentication;
     switch (result.reason) {
     case ProcessTerminationReason::TimedOut: return GmgnFailureCode::Timeout;
     case ProcessTerminationReason::Cancelled: return GmgnFailureCode::Cancelled;
@@ -113,7 +124,8 @@ GmgnResult<std::string> GmgnCliClient::RunAndReadJson(const std::vector<std::wst
         std::scoped_lock lock(rateLimitMutex_);
         if (std::chrono::steady_clock::now() < rateLimitBlockedUntil_) {
             return GmgnFailure{GmgnFailureCode::RateLimited,
-                "GMGN rate limit cooldown is active. The client did not start another request."};
+                "GMGN rate limit cooldown is active. The client did not start another request.",
+                std::chrono::duration_cast<std::chrono::seconds>(rateLimitBlockedUntil_ - std::chrono::steady_clock::now()) + std::chrono::seconds{1}};
         }
     }
     ProcessRequest request;
@@ -129,7 +141,7 @@ GmgnResult<std::string> GmgnCliClient::RunAndReadJson(const std::vector<std::wst
         }
     }
     if (result.reason != ProcessTerminationReason::Completed || result.exitCode != 0 || result.stdoutOutput.truncated) {
-        return GmgnFailure{CodeFor(result), DiagnosticFor(result)};
+        return GmgnFailure{CodeFor(result), DiagnosticFor(result), IsRateLimited(result) ? std::optional{EffectiveRateLimitCooldown(result)} : std::nullopt};
     }
     return result.stdoutOutput.text;
 }
