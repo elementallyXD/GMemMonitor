@@ -9,6 +9,7 @@ responses, credentials, wallet lists, or transaction activity.
 ```powershell
 .\scripts\Provision-PinnedRuntime.ps1
 .\scripts\Test-Workspace.ps1 -Configuration All
+.\scripts\Test-AddressSanitizer.ps1
 .\scripts\Stage-PortableRelease.ps1 -Version <major.minor.patch>
 ```
 

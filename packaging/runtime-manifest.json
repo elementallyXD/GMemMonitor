@@ -5,6 +5,7 @@
   "node": {
     "version": "24.12.0",
     "source": "https://nodejs.org/dist/v24.12.0/node-v24.12.0-win-x64.zip",
+    "archive_sha256": "9c125f61ae947b52e779095830f9cac267846a043ef7192183c84016aaad2812",
     "expected_relative_path": "runtime/node.exe",
     "sha256": "2ffe3acc0458fdde999f50d11809bbe7c9b7ef204dcf17094e325d26ace101d8"
   },

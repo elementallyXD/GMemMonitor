@@ -225,6 +225,23 @@
     <Import Project="packages\Microsoft.Windows.SDK.BuildTools.10.0.28000.2526\build\Microsoft.Windows.SDK.BuildTools.targets" Condition="Exists('packages\Microsoft.Windows.SDK.BuildTools.10.0.28000.2526\build\Microsoft.Windows.SDK.BuildTools.targets')" />
     <Import Project="packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets" Condition="Exists('packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets')" />
   </ImportGroup>
+  <!--
+    AppNotificationManager in an unpackaged self-contained process loads the
+    aggregate runtime's Insights resource DLL during registration. The 2.4
+    component targets do not copy that one file (WindowsAppSDK issue #6071),
+    although it is present in the pinned aggregate runtime MSIX. Extract and
+    stage only that redistributable payload from the restored NuGet package.
+  -->
+  <PropertyGroup>
+    <WindowsAppRuntimeAggregateMsix>$(ProjectDir)packages\Microsoft.WindowsAppSDK.Runtime.2.4.0\tools\MSIX\win10-x64\Microsoft.WindowsAppRuntime.2.msix</WindowsAppRuntimeAggregateMsix>
+    <WindowsAppRuntimeAggregateExtract>$(IntDir)WindowsAppRuntimeAggregate\</WindowsAppRuntimeAggregateExtract>
+  </PropertyGroup>
+  <Target Name="CopyWindowsAppRuntimeInsightsResource" BeforeTargets="PrepareForRun">
+    <Error Condition="!Exists('$(WindowsAppRuntimeAggregateMsix)')" Text="The pinned Windows App SDK aggregate runtime MSIX is missing. Restore packages.config before building." />
+    <Unzip SourceFiles="$(WindowsAppRuntimeAggregateMsix)" DestinationFolder="$(WindowsAppRuntimeAggregateExtract)" SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(WindowsAppRuntimeAggregateExtract)Microsoft.WindowsAppRuntime.Insights.Resource.dll')" Text="The pinned aggregate runtime did not contain Microsoft.WindowsAppRuntime.Insights.Resource.dll." />
+    <Copy SourceFiles="$(WindowsAppRuntimeAggregateExtract)Microsoft.WindowsAppRuntime.Insights.Resource.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>
       <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>

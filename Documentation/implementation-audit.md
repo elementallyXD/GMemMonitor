@@ -24,15 +24,16 @@ execution and remain open:
 | 01 | Pinned Node 24.12.0 and gmgn-cli 1.5.7; successful sanitized feed, token-info, and token-security fixtures; credential-safe probe | Repeated poll ordering/overlap observations; no supported CLI pagination option is known |
 | 02 | Typed parsers/errors, schema-versioned atomic settings, bounded redacted logger, hardened CreateProcessW boundary, process fixtures | None for the offline code gate |
 | 03 | Controller, startup baseline, SHA-256 fallback dedupe, exact rolling clusters, completion-relative non-overlapping polling, cancellation/backoff | Live feed cadence/overlap observation |
-| 04 | Shared priority scheduler, bounded analysis queue, token/security enrichment, factual alerts, validated GMGN URLs, delivery-based cooldown | Live enrichment revalidation when intentionally scheduled |
-| 05 | Dashboard dispatch, persistence, native notifications, browser activation, stable-GUID tray, Explorer recreation, minimize/close and power handling | Interactive Windows acceptance and notification activation after app exit |
-| 06 | Warning-clean Debug/Release build, expanded unit/contract/process tests, CI workflow, secret scan, pinned runtime tree verification, allowlisted ZIP/checksum staging | Clean-checkout CI execution, multi-hour/24-hour soak, clean-VM matrix |
+| 04 | Shared weighted 20/20 scheduler (feed weight 3, enrichment weight 1), bounded analysis queue, token/security enrichment, factual alerts, validated GMGN URLs, delivery-based cooldown | Live enrichment revalidation when intentionally scheduled |
+| 05 | Dashboard dispatch, persistence, native notifications, browser activation, stable-GUID tray, Explorer recreation, minimize/close and power handling; local staged launch, notification registration, responsive window, and clean exit smoke passed | Interactive clean-VM acceptance and notification activation after app exit |
+| 06 | Warning-clean Debug/Release build, Visual Studio static analysis, AddressSanitizer, expanded unit/contract/process tests, accelerated deterministic soak, CI workflow, secret scan, pinned runtime tree verification, allowlisted ZIP/checksum staging | Clean-checkout CI execution, 24-hour real-time soak, clean-VM matrix |
 
 ## Verified local commands
 
 ```powershell
 .\scripts\Provision-PinnedRuntime.ps1
 .\scripts\Test-Workspace.ps1 -Configuration All
+.\scripts\Test-AddressSanitizer.ps1
 .\scripts\Stage-PortableRelease.ps1 -Version 0.1.0
 ```
 

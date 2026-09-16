@@ -23,7 +23,7 @@ function Test-PinnedRuntime {
 
 function Get-RuntimeTreeHash([string]$root) {
     $resolvedRoot = (Resolve-Path -LiteralPath $root).Path
-    [string[]]$entries = @(Get-ChildItem -LiteralPath $resolvedRoot -File -Recurse | ForEach-Object {
+    [string[]]$entries = @(Get-ChildItem -LiteralPath $resolvedRoot -File -Recurse -Force | ForEach-Object {
         $relative = $_.FullName.Substring($resolvedRoot.Length + 1).Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         "$relative`0$hash"
@@ -48,6 +48,9 @@ try {
     New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
     $nodeArchive = Join-Path $temporaryRoot 'node.zip'
     Invoke-WebRequest -Uri $manifest.node.source -OutFile $nodeArchive
+    if ((Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash -ne $manifest.node.archive_sha256) {
+        throw 'Downloaded Node archive does not match the pinned manifest hash.'
+    }
     $nodeExtract = Join-Path $temporaryRoot 'node'
     Expand-Archive -LiteralPath $nodeArchive -DestinationPath $nodeExtract
     $extractedNode = Get-ChildItem -LiteralPath $nodeExtract -Filter node.exe -File -Recurse | Select-Object -First 1

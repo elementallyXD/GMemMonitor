@@ -8,6 +8,7 @@
 #include "gmemmonitor/core/Settings.h"
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
@@ -106,13 +107,40 @@ public:
     explicit AuthenticationDuringAnalysisClient(FollowWalletPage initial) : initial_(std::move(initial)) {}
     GmgnResult<FollowWalletPage> FetchFollowWalletBuys(std::stop_token) override { return initial_; }
     GmgnResult<TokenInfo> FetchTokenInfo(const EvmAddress&, std::stop_token) override {
+        ++infoCalls;
         return GmgnFailure{GmgnFailureCode::Authentication, "authentication rejected"};
     }
     GmgnResult<TokenSecurity> FetchTokenSecurity(const EvmAddress&, std::stop_token) override {
         return GmgnFailure{GmgnFailureCode::Authentication, "authentication rejected"};
     }
+    std::atomic_size_t infoCalls{};
 private:
     FollowWalletPage initial_;
+};
+
+class BlockingFeedClient final : public IGmgnClient {
+public:
+    GmgnResult<FollowWalletPage> FetchFollowWalletBuys(const std::stop_token stop) override {
+        std::unique_lock lock(mutex_);
+        started_ = true;
+        wake_.notify_all();
+        wake_.wait(lock, stop, [] { return false; });
+        return GmgnFailure{GmgnFailureCode::Cancelled, "cancelled"};
+    }
+    GmgnResult<TokenInfo> FetchTokenInfo(const EvmAddress&, std::stop_token) override {
+        return GmgnFailure{GmgnFailureCode::Cancelled, "cancelled"};
+    }
+    GmgnResult<TokenSecurity> FetchTokenSecurity(const EvmAddress&, std::stop_token) override {
+        return GmgnFailure{GmgnFailureCode::Cancelled, "cancelled"};
+    }
+    void WaitUntilStarted() {
+        std::unique_lock lock(mutex_);
+        wake_.wait(lock, [this] { return started_; });
+    }
+private:
+    std::mutex mutex_;
+    std::condition_variable_any wake_;
+    bool started_{};
 };
 
 [[nodiscard]] std::filesystem::path ExistingSourceFile() {
@@ -377,7 +405,9 @@ int main() {
     bool sessionAuthenticationRequired{};
     auto sessionAuthClient = std::make_shared<AuthenticationDuringAnalysisClient>(FollowWalletPage{{
         Event('9', '1', 100'000'000, now, "session-auth-1"),
-        Event('9', '2', 100'000'000, now, "session-auth-2")}});
+        Event('9', '2', 100'000'000, now, "session-auth-2"),
+        Event('8', '1', 100'000'000, now, "session-auth-3"),
+        Event('8', '2', 100'000'000, now, "session-auth-4")}});
     MonitoringSession authenticationSession(sessionAuthClient, notifications, controllerClock, alertClock,
         [&](const MonitoringUpdate& update) {
             if (update.state == MonitoringState::AuthenticationRequired) {
@@ -395,6 +425,16 @@ int main() {
             "authentication failure during enrichment must stop feed polling and surface authentication-required state");
     }
     authenticationSession.Stop();
+    Expect(sessionAuthClient->infoCalls.load() == 1,
+        "authentication failure must cancel queued analysis before another GMGN request");
+
+    auto blockingClient = std::make_shared<BlockingFeedClient>();
+    MonitoringSession duplicateStartSession(blockingClient, notifications, controllerClock, alertClock);
+    Expect(duplicateStartSession.Start(sessionSettings), "first monitoring session start must succeed");
+    blockingClient->WaitUntilStarted();
+    Expect(!duplicateStartSession.Start(sessionSettings),
+        "duplicate monitoring session start must be rejected before scheduler state changes");
+    duplicateStartSession.Stop();
 
     const auto settingsDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-settings-self-test";
     const auto settingsPath = settingsDirectory / "config.json";

@@ -3,6 +3,7 @@
 #include "gmemmonitor/core/Analysis.h"
 #include "gmemmonitor/core/Monitoring.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -40,6 +41,7 @@ private:
     TokenAnalysisService analysisService_;
     TokenAnalysisExecutor analysisExecutor_;
     WalletActivityPoller poller_;
+    std::atomic_bool started_{};
 };
 
 } // namespace gmemmonitor::core

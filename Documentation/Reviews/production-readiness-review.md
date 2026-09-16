@@ -15,7 +15,8 @@ x64 VM checklist are recorded.
 - CreateProcessW with explicit arguments, NUL stdin, handle allowlist, sanitized child
   environment, timeouts/cancellation, and kill-on-close Job Object containment.
 - Startup baseline, completion-relative non-overlapping polls, reset-aware rate-limit
-  suppression, bounded retries, and authentication stop behavior.
+  suppression, a weighted 20-token/second admission bucket, bounded retries, and
+  authentication stop behavior.
 - Required token-info/security enrichment and factual alerts only.
 - Unicode/control sanitization and exact-host HTTPS GMGN URL validation at both model and
   browser boundaries.
@@ -23,6 +24,10 @@ x64 VM checklist are recorded.
   tray icon, Explorer recreation, close/minimize behavior, and OFF-after-resume behavior.
 - Runtime version/hash/tree verification, release extension allowlist, prohibited-content
   and secret scans, versioned ZIP, and SHA-256 checksum.
+- Warning-clean Debug/Release builds, Visual Studio C++ static analysis,
+  AddressSanitizer, and an accelerated deterministic fake-feed soak.
+- Local unpackaged staged-app smoke: notification registration succeeds, the window is
+  responsive, and Close completes with exit code 0.
 
 ## Remaining release gates
 
@@ -30,7 +35,7 @@ x64 VM checklist are recorded.
 |---|---|
 | Live contract | Intentional repeated polls record sanitized ordering/ID overlap and confirm the pagination limitation is unchanged |
 | Clean VM | First launch without global Node/App SDK, missing-config UX, Start/Stop, notification delivery/activation, browser action, tray, Explorer restart, suspend/resume, replacement update |
-| Reliability | Accelerated fake-feed soak plus 24-hour idle/fake-feed handle, memory, log, queue, and child-process observations |
+| Reliability | 24-hour idle/fake-feed handle, memory, log, queue, and child-process observations |
 | CI | Successful run of the checked-in Windows workflow from a clean checkout |
 
 ## Release guardrails

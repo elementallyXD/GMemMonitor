@@ -121,12 +121,13 @@ After verification, create a versioned x64 ZIP and SHA-256 checksum:
 .\scripts\Stage-PortableRelease.ps1 -Version 0.1.0
 ```
 
-The staging script copies only allowlisted self-contained application/runtime files and
-rejects symbols, AppX build artifacts, test fixtures, logs, `.env` files, dumps, and
-credential-shaped content. Run `GmemMonitor.exe` from the extracted folder. Because the
-personal-use MVP is unsigned, Windows may show its normal reputation warning; inspect the
-SHA-256 checksum and publisher/source before choosing to run it. Do not disable Windows
-security controls globally.
+The staging script copies only allowlisted self-contained application files and the exact
+verified runtime tree described by `runtime-manifest.json`. It rejects symbols, AppX build
+artifacts, test fixtures, logs, `.env` files, dumps, and credential-shaped content. Run
+`GmemMonitor.exe` from the extracted folder. Because the personal-use MVP is unsigned,
+Windows may show its normal reputation warning; inspect the SHA-256 checksum and
+publisher/source before choosing to run it. Do not disable Windows security controls
+globally.
 
 Updates are manual: stop GMemMonitor and replace its portable folder. Settings under
 `%LOCALAPPDATA%\GMemMonitor` and the user-owned `%USERPROFILE%\.config\gmgn\.env` remain

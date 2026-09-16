@@ -18,6 +18,10 @@ if ($manifest.schema_version -ne 1) { throw 'Unsupported runtime manifest schema
 if (-not (Test-Path -LiteralPath (Join-Path $appOutput 'GmemMonitor.exe'))) {
     throw 'Release application output is missing. Run the Release build first.'
 }
+$notificationResource = Join-Path $appOutput 'Microsoft.WindowsAppRuntime.Insights.Resource.dll'
+if (-not (Test-Path -LiteralPath $notificationResource -PathType Leaf)) {
+    throw 'The Windows App SDK notification resource DLL is missing from Release output.'
+}
 
 function Resolve-RuntimePath([string]$relativePath) {
     if (-not $relativePath.StartsWith('runtime/', [StringComparison]::Ordinal)) {
@@ -37,9 +41,9 @@ function Assert-FileHash([string]$path, [string]$expected, [string]$label) {
     if ($actual -ne $expected) { throw "$label hash does not match the pinned manifest." }
 }
 
-function Get-RuntimeTreeHash {
-    $root = (Resolve-Path -LiteralPath $runtimeRoot).Path
-    [string[]]$entries = @(Get-ChildItem -LiteralPath $root -File -Recurse | ForEach-Object {
+function Get-RuntimeTreeHash([string]$treeRoot) {
+    $root = (Resolve-Path -LiteralPath $treeRoot).Path
+    [string[]]$entries = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | ForEach-Object {
         $relative = $_.FullName.Substring($root.Length + 1).Replace('\', '/')
         $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         "$relative`0$hash"
@@ -74,7 +78,7 @@ if (-not $lockedCliMatch.Success -or
     $lockedCliBody -notmatch ('"integrity"\s*:\s*"' + [regex]::Escape($manifest.gmgn_cli.integrity) + '"')) {
     throw 'npm lock data does not match the pinned gmgn-cli version and integrity.'
 }
-if ((Get-RuntimeTreeHash) -ne $manifest.runtime_tree_sha256) {
+if ((Get-RuntimeTreeHash $runtimeRoot) -ne $manifest.runtime_tree_sha256) {
     throw 'Runtime tree hash does not match the pinned manifest.'
 }
 
@@ -85,6 +89,9 @@ $appFiles = @(Get-ChildItem -LiteralPath $appOutput -File -Recurse | Where-Objec
     $allowedAppExtensions -contains $_.Extension.ToLowerInvariant()
 })
 if (-not ($appFiles | Where-Object Name -eq 'GmemMonitor.exe')) { throw 'Allowlisted application output does not contain GmemMonitor.exe.' }
+if (-not ($appFiles | Where-Object Name -eq 'Microsoft.WindowsAppRuntime.Insights.Resource.dll')) {
+    throw 'Allowlisted application output does not contain the notification registration resource.'
+}
 
 if ($DryRun) {
     Write-Output "Portable release dry run passed: $($appFiles.Count) app files and a verified pinned runtime tree."
@@ -106,19 +113,15 @@ foreach ($file in $appFiles) {
 
 $runtimeStage = Join-Path $stageRoot 'runtime'
 New-Item -ItemType Directory -Path $runtimeStage -Force | Out-Null
-Copy-Item -LiteralPath $nodePath -Destination (Join-Path $runtimeStage 'node.exe')
-$lockDestination = Join-Path $runtimeStage 'gmgn-cli\package-lock.json'
-New-Item -ItemType Directory -Path (Split-Path -Parent $lockDestination) -Force | Out-Null
-Copy-Item -LiteralPath $cliLockFile -Destination $lockDestination
-$runtimeExtensions = @('.js', '.json', '.mjs', '.cjs', '.node', '.wasm', '.pem', '.crt')
-$moduleRoot = Join-Path $runtimeRoot 'gmgn-cli\node_modules'
-Get-ChildItem -LiteralPath $moduleRoot -File -Recurse | Where-Object {
-    ($runtimeExtensions -contains $_.Extension.ToLowerInvariant()) -or $_.Name.StartsWith('LICENSE', [StringComparison]::OrdinalIgnoreCase)
-} | ForEach-Object {
-    $relative = $_.FullName.Substring($runtimeRoot.Length + 1)
+$verifiedRuntimeFiles = @(Get-ChildItem -LiteralPath $runtimeRoot -File -Recurse -Force)
+foreach ($file in $verifiedRuntimeFiles) {
+    $relative = $file.FullName.Substring($runtimeRoot.Length + 1)
     $destination = Join-Path $runtimeStage $relative
     New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-    Copy-Item -LiteralPath $_.FullName -Destination $destination
+    Copy-Item -LiteralPath $file.FullName -Destination $destination
+}
+if ((Get-RuntimeTreeHash $runtimeStage) -ne $manifest.runtime_tree_sha256) {
+    throw 'Staged runtime tree does not match the bundled runtime manifest.'
 }
 
 Copy-Item -LiteralPath (Join-Path $workspace 'README.md') -Destination $stageRoot
