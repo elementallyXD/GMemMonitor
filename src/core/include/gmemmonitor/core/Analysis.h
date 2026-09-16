@@ -5,6 +5,7 @@
 
 #include <condition_variable>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -20,6 +21,10 @@ namespace gmemmonitor::core {
 class GmgnRequestScheduler final {
 public:
     enum class Priority { Feed, Enrichment };
+    static constexpr std::size_t kFeedWeight = 3;
+    static constexpr std::size_t kEnrichmentWeight = 1;
+    static constexpr std::size_t kDefaultTokensPerSecond = 20;
+    static constexpr std::size_t kDefaultCapacity = 20;
     class Permit final {
     public:
         Permit() = default; Permit(const Permit&) = delete; Permit& operator=(const Permit&) = delete;
@@ -29,17 +34,32 @@ public:
         explicit Permit(GmgnRequestScheduler* owner) noexcept : owner_(owner) {}
         GmgnRequestScheduler* owner_{};
     };
-    explicit GmgnRequestScheduler(std::size_t maximumActive = 1);
-    [[nodiscard]] std::optional<Permit> Acquire(Priority priority, std::stop_token stop);
+    explicit GmgnRequestScheduler(std::size_t maximumActive = 1,
+                                  std::size_t tokensPerSecond = kDefaultTokensPerSecond,
+                                  std::size_t tokenCapacity = kDefaultCapacity);
+    [[nodiscard]] std::optional<Permit> Acquire(Priority priority, std::size_t weight,
+                                                std::stop_token stop);
     [[nodiscard]] std::size_t ActiveCount() const;
     [[nodiscard]] std::size_t PendingCount() const;
     void CancelPending() noexcept;
+    void Reset() noexcept;
 private:
-    struct Waiter final { std::size_t sequence{}; Priority priority{}; };
+    struct Waiter final { std::size_t sequence{}; Priority priority{}; std::size_t weight{}; };
     void Release() noexcept;
+    void Refill(std::chrono::steady_clock::time_point now) noexcept;
     [[nodiscard]] bool MayRun(std::size_t sequence) const noexcept;
-    const std::size_t maximumActive_; mutable std::mutex mutex_; std::condition_variable_any wake_;
-    std::vector<Waiter> waiters_; std::size_t active_{}; std::size_t nextSequence_{}; bool cancelled_{};
+    [[nodiscard]] std::chrono::steady_clock::duration WaitForTokens(std::size_t weight) const noexcept;
+    const std::size_t maximumActive_;
+    const std::size_t tokensPerSecond_;
+    const std::size_t tokenCapacity_;
+    mutable std::mutex mutex_;
+    std::condition_variable_any wake_;
+    std::vector<Waiter> waiters_;
+    std::size_t active_{};
+    std::size_t nextSequence_{};
+    double availableTokens_{};
+    std::chrono::steady_clock::time_point lastRefill_{};
+    bool cancelled_{};
 };
 
 struct IAlertClock { virtual ~IAlertClock() = default; [[nodiscard]] virtual std::chrono::steady_clock::time_point SteadyNow() const = 0; };
@@ -51,6 +71,7 @@ struct AnalysisUpdate final {
     std::string diagnostic;
     std::optional<TokenAlert> alert;
     std::optional<std::chrono::seconds> retryAfter;
+    bool authenticationRequired{};
 };
 
 class TokenAnalysisService final {
@@ -78,6 +99,7 @@ public:
     // Applies backpressure instead of discarding a qualifying cluster when the
     // bounded queue is full. Stop() wakes blocked submitters.
     [[nodiscard]] bool Submit(FrozenTokenCluster cluster, std::stop_token stop = {});
+    void RequestStop() noexcept;
     void Stop() noexcept;
 private:
     struct PendingAnalysis final {

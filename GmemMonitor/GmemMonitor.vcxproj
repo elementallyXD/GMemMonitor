@@ -132,6 +132,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
+    <ClInclude Include="ApplicationLog.h" />
+    <ClInclude Include="TrayIconService.h" />
     <ClInclude Include="WindowsNotificationService.h" />
     <ClInclude Include="App.xaml.h">
       <DependentUpon>App.xaml</DependentUpon>
@@ -154,7 +156,9 @@
     <ClCompile Include="MainWindow.xaml.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="ApplicationLog.cpp" />
     <ClCompile Include="WindowsNotificationService.cpp" />
+    <ClCompile Include="TrayIconService.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
   </ItemGroup>
   <ItemGroup>

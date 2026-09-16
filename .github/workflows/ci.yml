@@ -1,0 +1,25 @@
+name: Windows CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  offline-verification:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Provision pinned Node and gmgn-cli runtime
+        shell: pwsh
+        run: .\scripts\Provision-PinnedRuntime.ps1
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: nuget restore .\GmemMonitor\packages.config -PackagesDirectory .\GmemMonitor\packages -NonInteractive
+      - name: Build, test, scan, and validate portable staging
+        shell: pwsh
+        run: .\scripts\Test-Workspace.ps1 -Configuration All
+      - name: AddressSanitizer core and offline tests
+        shell: pwsh
+        run: .\scripts\Test-AddressSanitizer.ps1

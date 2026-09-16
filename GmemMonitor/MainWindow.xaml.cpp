@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "MainWindow.xaml.h"
+#include "ApplicationLog.h"
 #include "WindowsNotificationService.h"
 #if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
@@ -55,6 +56,36 @@ namespace winrt::GmemMonitor::implementation
         InitializeComponent();
         LoadSettings();
         ValidateSettings();
+        try {
+            HWND windowHandle{};
+            auto windowNative = this->try_as<::IWindowNative>();
+            if (windowNative && SUCCEEDED(windowNative->get_WindowHandle(&windowHandle))) {
+                trayIcon_ = std::make_unique<gmemmonitor::platform::TrayIconService>();
+                auto weak = get_weak();
+                if (!trayIcon_->Initialize(windowHandle,
+                    [weak] { if (const auto self = weak.get()) self->OpenFromTray(); },
+                    [weak] { if (const auto self = weak.get()) self->ToggleMonitoring(); },
+                    [weak] { if (const auto self = weak.get()) self->Close(); },
+                    [weak] { if (const auto self = weak.get()) self->SuspendMonitoring(); },
+                    [weak] { if (const auto self = weak.get()) self->ResumeStopped(); })) {
+                    trayIcon_.reset();
+                    gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Error, "tray initialization failed");
+                }
+            }
+        } catch (...) {
+            trayIcon_.reset();
+            gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Error, "tray initialization failed");
+        }
+        auto weak = get_weak();
+        Closed([weak](IInspectable const&, WindowEventArgs const&) {
+            if (const auto self = weak.get()) {
+                gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "window close cleanup started");
+                self->StopMonitoring(false);
+                gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "window monitoring cleanup completed");
+                if (self->trayIcon_) self->trayIcon_->Shutdown();
+                gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "window tray cleanup completed");
+            }
+        });
         if (!gmemmonitor::platform::AppNotificationServiceAvailable()) {
             StatusBar().Severity(Controls::InfoBarSeverity::Error);
             StatusBar().Title(L"Notifications unavailable");
@@ -62,7 +93,14 @@ namespace winrt::GmemMonitor::implementation
         }
     }
 
-    MainWindow::~MainWindow() { StopMonitoring(); }
+    MainWindow::~MainWindow()
+    {
+        // XAML controls may already be torn down when the implementation object
+        // is released after Closed. Do not touch presentation state here.
+        StopMonitoring(false);
+        if (trayIcon_) trayIcon_->Shutdown();
+        trayIcon_.reset();
+    }
 
     int32_t MainWindow::MyProperty() { return myProperty_; }
     void MainWindow::MyProperty(int32_t value) { myProperty_ = value; }
@@ -142,6 +180,11 @@ namespace winrt::GmemMonitor::implementation
 
     void MainWindow::StartStop_Click(IInspectable const&, RoutedEventArgs const&)
     {
+        ToggleMonitoring();
+    }
+
+    void MainWindow::ToggleMonitoring()
+    {
         if (session_) { StopMonitoring(); return; }
         const auto settings = ReadSettings();
         if (!settings) { ValidateSettings(); return; }
@@ -157,7 +200,8 @@ namespace winrt::GmemMonitor::implementation
             StatusBar().Severity(Controls::InfoBarSeverity::Error); StatusBar().Title(L"Monitoring could not start"); StatusBar().Message(L"The application location could not be resolved."); return;
         }
         const auto root = std::filesystem::path(executable).parent_path();
-        const gmemmonitor::core::GmgnRuntimePaths runtime{root / L"runtime" / L"node.exe", root / L"runtime" / L"gmgn-cli" / L"dist" / L"index.js"};
+        const gmemmonitor::core::GmgnRuntimePaths runtime{root / L"runtime" / L"node.exe",
+            root / L"runtime" / L"gmgn-cli" / L"node_modules" / L"gmgn-cli" / L"dist" / L"index.js"};
         if (!std::filesystem::is_regular_file(runtime.nodeExecutable) || !std::filesystem::is_regular_file(runtime.cliEntry)) {
             StatusBar().Severity(Controls::InfoBarSeverity::Warning); StatusBar().Title(L"Bundled GMGN runtime is missing"); StatusBar().Message(L"Install the pinned runtime beside GMemMonitor before starting monitoring."); return;
         }
@@ -169,19 +213,22 @@ namespace winrt::GmemMonitor::implementation
             [dispatcher, weak](const gmemmonitor::core::MonitoringUpdate& update) {
                 dispatcher.TryEnqueue([weak, update] { if (const auto self = weak.get()) self->ApplyMonitoringUpdate(update); });
             },
-            [dispatcher, weak](const gmemmonitor::core::AnalysisUpdate&) {
-                dispatcher.TryEnqueue([weak] { if (const auto self = weak.get()) self->LastTokenText().Text(L"Last analyzed token: enriched alert processed"); });
+            [dispatcher, weak](const gmemmonitor::core::AnalysisUpdate& update) {
+                dispatcher.TryEnqueue([weak, update] { if (const auto self = weak.get()) self->ApplyAnalysisUpdate(update); });
             });
         if (!session_->Start(*settings)) { session_.reset(); clock_.reset(); StatusBar().Severity(Controls::InfoBarSeverity::Error); StatusBar().Title(L"Monitoring could not start"); StatusBar().Message(L"The monitoring session could not be initialized."); return; }
         SetMonitoringControls(true);
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "monitoring started");
         StatusBar().Severity(Controls::InfoBarSeverity::Informational); StatusBar().Title(L"Authenticating"); StatusBar().Message(L"Checking the external GMGN CLI configuration.");
     }
 
-    void MainWindow::StopMonitoring() noexcept
+    void MainWindow::StopMonitoring(const bool updateControls) noexcept
     {
+        const bool wasActive = static_cast<bool>(session_);
         if (session_) session_->Stop();
         session_.reset(); clock_.reset();
-        SetMonitoringControls(false);
+        if (updateControls) SetMonitoringControls(false);
+        if (wasActive) gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "monitoring stopped");
     }
 
     void MainWindow::SetMonitoringControls(const bool active)
@@ -189,6 +236,7 @@ namespace winrt::GmemMonitor::implementation
         PollIntervalBox().IsEnabled(!active); MinimumBuyBox().IsEnabled(!active); WalletThresholdBox().IsEnabled(!active); WindowBox().IsEnabled(!active); CooldownBox().IsEnabled(!active); SaveSettingsButton().IsEnabled(!active && ReadSettings().has_value());
         StartStopButton().Content(active ? box_value(L"Stop monitoring") : box_value(L"Start monitoring"));
         Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(StartStopButton(), active ? L"Stop monitoring" : L"Start monitoring");
+        if (trayIcon_) trayIcon_->SetMonitoring(active);
     }
 
     void MainWindow::ApplyMonitoringUpdate(const gmemmonitor::core::MonitoringUpdate& update)
@@ -196,7 +244,55 @@ namespace winrt::GmemMonitor::implementation
         const auto state = update.state == gmemmonitor::core::MonitoringState::Monitoring ? L"Monitoring" : update.state == gmemmonitor::core::MonitoringState::Retrying ? L"Retrying" : update.state == gmemmonitor::core::MonitoringState::AuthenticationRequired ? L"Authentication required" : L"Authenticating";
         StatusBar().Title(state); StatusBar().Message(update.diagnostic.empty() ? L"Monitoring current GMGN follows dynamically." : to_hstring(update.diagnostic));
         if (update.state == gmemmonitor::core::MonitoringState::Monitoring) LastPollText().Text(L"Last successful poll: just now");
+        if (!update.diagnostic.empty()) {
+            const auto level = update.state == gmemmonitor::core::MonitoringState::AuthenticationRequired
+                ? gmemmonitor::core::LogLevel::Error : gmemmonitor::core::LogLevel::Warning;
+            gmemmonitor::platform::WriteApplicationLog(level, "monitoring status", update.diagnostic);
+        }
         if (update.state == gmemmonitor::core::MonitoringState::AuthenticationRequired) { session_.reset(); clock_.reset(); SetMonitoringControls(false); }
+    }
+
+    void MainWindow::ApplyAnalysisUpdate(const gmemmonitor::core::AnalysisUpdate& update)
+    {
+        if (update.alert) LastTokenText().Text(L"Last analyzed token: " + to_hstring(update.alert->sanitizedSymbol));
+        if (update.delivered) {
+            gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "notification delivered");
+        } else if (update.suppressedByCooldown) {
+            gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "notification suppressed by cooldown");
+        } else if (!update.diagnostic.empty()) {
+            gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Warning, "token analysis error", update.diagnostic);
+        }
+    }
+
+    void MainWindow::OpenFromTray()
+    {
+        HWND windowHandle{};
+        if (auto windowNative = this->try_as<::IWindowNative>(); windowNative && SUCCEEDED(windowNative->get_WindowHandle(&windowHandle))) {
+            ShowWindow(windowHandle, SW_RESTORE);
+            SetForegroundWindow(windowHandle);
+        }
+        Activate();
+    }
+
+    void MainWindow::SuspendMonitoring() noexcept
+    {
+        // WM_POWERBROADCAST is time-sensitive. Signal every worker and return;
+        // ResumeStopped (or orderly shutdown) performs the bounded joins.
+        if (session_) session_->RequestStop();
+        SetMonitoringControls(false);
+        StatusBar().Severity(Controls::InfoBarSeverity::Informational);
+        StatusBar().Title(L"Monitoring is OFF");
+        StatusBar().Message(L"Monitoring stopped for system suspend and will remain OFF after resume.");
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "system suspend");
+    }
+
+    void MainWindow::ResumeStopped() noexcept
+    {
+        StopMonitoring();
+        StatusBar().Severity(Controls::InfoBarSeverity::Informational);
+        StatusBar().Title(L"Monitoring is OFF");
+        StatusBar().Message(L"Windows resumed. Start monitoring manually when ready.");
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "system resume; monitoring remains stopped");
     }
 
     void MainWindow::ValidateSettings()

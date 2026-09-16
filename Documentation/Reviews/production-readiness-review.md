@@ -2,47 +2,41 @@
 
 ## Verdict
 
-The repository is a useful Phase 01/partial Phase 02 foundation, but it is **not
-production-ready** and must not be represented as a functioning monitor. The WinUI 3
-GUI shell is the right application type; it is intentionally disconnected from live
-GMGN work until the contract fixture gate passes.
+The MVP implementation is feature-complete for its approved read-only scope and passes
+the local offline verification matrix. It remains a **release candidate**, not a fully
+validated release, until the opt-in live observations, soak tests, and clean Windows 11
+x64 VM checklist are recorded.
 
-## What is in place
+## Implemented controls
 
-- Unpackaged/self-contained WinUI 3 C++/WinRT application shell.
-- Core domain primitives, fixed-point USD parsing, rolling token/wallet aggregation,
-  alert composition primitives, cooldown primitive, and offline smoke tests.
-- Win32 child-process runner using `CreateProcessW`, output pipes, timeout,
-  cancellation, and a Job Object.
-- Credential-safe contract probe with bounded output and safe 429 classification.
+- Unpackaged, self-contained WinUI 3 application that always starts OFF.
+- Dynamic current-follow BSC BUY monitoring through pinned gmgn-cli; no scoring/trading.
+- Strict typed parsing, fixed-point micro-USD, bounded dedupe/analysis/output/log state.
+- CreateProcessW with explicit arguments, NUL stdin, handle allowlist, sanitized child
+  environment, timeouts/cancellation, and kill-on-close Job Object containment.
+- Startup baseline, completion-relative non-overlapping polls, reset-aware rate-limit
+  suppression, bounded retries, and authentication stop behavior.
+- Required token-info/security enrichment and factual alerts only.
+- Unicode/control sanitization and exact-host HTTPS GMGN URL validation at both model and
+  browser boundaries.
+- Atomic non-secret settings, rotating redacted diagnostics, notifications, stable-GUID
+  tray icon, Explorer recreation, close/minimize behavior, and OFF-after-resume behavior.
+- Runtime version/hash/tree verification, release extension allowlist, prohibited-content
+  and secret scans, versioned ZIP, and SHA-256 checksum.
 
-## Blocking gaps
+## Remaining release gates
 
-| Priority | Gap | Required resolution |
-|---|---|---|
-| P0 | Free-plan access blocks `follow-wallet`. | Obtain Plus access, then capture one sanitized success fixture. |
-| P0 | No typed feed/token/security JSON parser or fixture-backed contract tests. | Implement only after the success fixture exists. |
-| P0 | No monitoring controller, poll worker, shared scheduler, or live GUI binding. | Complete Phases 02–04 in order. |
-| P0 | No Windows notifications, tray, lifecycle, persistence, or clean-VM test. | Implement Phase 05 after core services exist. |
-| P1 | Display sanitization is byte-based and raw enrichment tax text can enter an alert. | Use Unicode-aware sanitization and sanitize every provider display field. |
-| P1 | Rate cooldown is client-instance local; it is not a global scheduler. | Add one bounded, shared scheduler that honors provider reset times without shortening them. |
-| P1 | Child process currently inherits interactive stdin and the complete environment. | Use NUL stdin, a handle allow-list, and a minimal documented environment. |
-| P1 | Runtime manifest entry does not match the currently installed CLI layout. | Correct and validate the packaged runtime path before release staging. |
-| P2 | Tests are smoke tests, not the planned GoogleTest/fixture/process suite. | Add deterministic unit, contract, process, and Windows integration coverage per plan. |
+| Gate | Required evidence |
+|---|---|
+| Live contract | Intentional repeated polls record sanitized ordering/ID overlap and confirm the pagination limitation is unchanged |
+| Clean VM | First launch without global Node/App SDK, missing-config UX, Start/Stop, notification delivery/activation, browser action, tray, Explorer restart, suspend/resume, replacement update |
+| Reliability | Accelerated fake-feed soak plus 24-hour idle/fake-feed handle, memory, log, queue, and child-process observations |
+| CI | Successful run of the checked-in Windows workflow from a clean checkout |
 
-## Required engineering order
+## Release guardrails
 
-1. Resolve plan access and capture sanitized fixtures.
-2. Finish parser, process-fixture, configuration, logging, and runtime-validation work.
-3. Implement controller, baseline, deduplication key generation, non-overlapping polling,
-   and global scheduling.
-4. Implement required token/security enrichment and factual alert composition.
-5. Connect the existing GUI, notifications, tray, configuration, and lifecycle behavior.
-6. Complete security hardening, clean-VM validation, and portable staging.
-
-## Guardrails
-
-- Keep all live GMGN operations behind `IGmgnClient` and one scheduler.
-- Keep all business and process work off the UI thread.
-- Never log raw GMGN responses, credentials, wallet lists, or transaction activity.
-- Preserve the read-only BSC MVP until a deliberate future-product decision changes it.
+- Never package or log `.env`, credentials, raw account responses, wallet lists, or
+  transaction-by-transaction activity.
+- Never claim lossless monitoring while the latest-100/no-cursor limitation remains.
+- Never label a token safe or attach a numerical score.
+- Do not publish the candidate until the remaining evidence is recorded.

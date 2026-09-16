@@ -1,7 +1,9 @@
 #include "gmemmonitor/core/Alerts.h"
 #include "gmemmonitor/core/Analysis.h"
 #include "gmemmonitor/core/GmgnClient.h"
+#include "gmemmonitor/core/Logging.h"
 #include "gmemmonitor/core/Monitoring.h"
+#include "gmemmonitor/core/MonitoringSession.h"
 #include "gmemmonitor/core/Process.h"
 #include "gmemmonitor/core/Settings.h"
 
@@ -24,10 +26,32 @@ namespace {
     std::string text{"0x000000000000000000000000000000000000000"}; text.push_back(suffix);
     return *EvmAddress::Parse(text);
 }
+[[nodiscard]] EvmAddress Address(const unsigned char suffix) {
+    EvmAddress address;
+    address.bytes.back() = static_cast<std::byte>(suffix);
+    return address;
+}
 [[nodiscard]] WalletBuyEvent Event(char token, char wallet, std::int64_t usdMicros, std::chrono::system_clock::time_point timestamp, std::string key) {
     return {std::move(key), {}, Address(wallet), Address(token), {}, {usdMicros}, {}, {}, timestamp};
 }
 void Expect(bool value, const char* message) { if (!value) { std::cerr << message << '\n'; std::exit(1); } }
+template <typename T>
+const T& RequireValue(const std::optional<T>& value, const char* message) {
+    if (!value) { std::cerr << message << '\n'; std::exit(1); }
+    return *value;
+}
+template <typename T, typename... Alternatives>
+const T& RequireAlternative(const std::variant<Alternatives...>& value, const char* message) {
+    const auto* result = std::get_if<T>(&value);
+    if (!result) { std::cerr << message << '\n'; std::exit(1); }
+    return *result;
+}
+template <typename Predicate>
+void ExpectEventually(Predicate predicate, const char* message) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Expect(predicate(), message);
+}
 
 class FakeProcessRunner final : public IProcessRunner {
 public:
@@ -77,6 +101,20 @@ public:
     }
 };
 
+class AuthenticationDuringAnalysisClient final : public IGmgnClient {
+public:
+    explicit AuthenticationDuringAnalysisClient(FollowWalletPage initial) : initial_(std::move(initial)) {}
+    GmgnResult<FollowWalletPage> FetchFollowWalletBuys(std::stop_token) override { return initial_; }
+    GmgnResult<TokenInfo> FetchTokenInfo(const EvmAddress&, std::stop_token) override {
+        return GmgnFailure{GmgnFailureCode::Authentication, "authentication rejected"};
+    }
+    GmgnResult<TokenSecurity> FetchTokenSecurity(const EvmAddress&, std::stop_token) override {
+        return GmgnFailure{GmgnFailureCode::Authentication, "authentication rejected"};
+    }
+private:
+    FollowWalletPage initial_;
+};
+
 [[nodiscard]] std::filesystem::path ExistingSourceFile() {
     return std::filesystem::absolute(std::filesystem::path(__FILE__));
 }
@@ -102,7 +140,10 @@ public:
 }
 
 [[nodiscard]] std::filesystem::path ProcessFixturePath() {
-    return ExistingSourceFile().parent_path().parent_path().parent_path() / "GmemMonitor" / "bin" / "x64" / "Debug" / "GMemMonitor.ProcessFixtures.exe";
+    const auto root = ExistingSourceFile().parent_path().parent_path().parent_path();
+    const auto solutionOutput = root / "GmemMonitor" / "bin" / "x64" / "Debug" / "GMemMonitor.ProcessFixtures.exe";
+    if (std::filesystem::exists(solutionOutput)) return solutionOutput;
+    return root / "tests" / "process-fixtures" / "x64" / "Debug" / "GMemMonitor.ProcessFixtures.exe";
 }
 
 [[nodiscard]] ProcessResult RunFixture(const std::vector<std::wstring>& arguments, const std::chrono::milliseconds timeout = std::chrono::seconds{2}, const std::size_t stdoutCap = 1024, const std::size_t stderrCap = 1024, const std::stop_token stop = {}) {
@@ -114,6 +155,14 @@ public:
 
 int main() {
     const auto now = std::chrono::system_clock::time_point{} + std::chrono::seconds(100);
+    Expect(EvmAddress::Parse("0xA00000000000000000000000000000000000000F")->ToCanonicalString() ==
+        "0xa00000000000000000000000000000000000000f", "EVM addresses must normalize to lowercase hex");
+    Expect(!EvmAddress::Parse("0x1234") && !EvmAddress::Parse("0xg000000000000000000000000000000000000000"),
+        "malformed EVM addresses must be rejected");
+    Expect(MoneyUsd::Parse("99.99")->micros == 99'990'000 && MoneyUsd::Parse("100.000000")->micros == 100'000'000,
+        "USD parsing must preserve threshold precision");
+    Expect(MoneyUsd::Parse("1.0000000")->micros == 1'000'000 && !MoneyUsd::Parse("1.0000001") &&
+        !MoneyUsd::Parse("9223372036854.775808"), "USD parsing must reject non-zero excess precision and overflow");
     MonitoringSettings settings; settings.distinctWalletThreshold = 2; settings.aggregationWindow = std::chrono::seconds(60);
     TokenClusterAggregator aggregator(settings);
     Expect(!aggregator.Add(Event('a', '1', 99'990'000, now, "low"), now), "$99.99 must be rejected");
@@ -148,6 +197,32 @@ int main() {
     Expect(queue.TryEnqueue(queuedCluster), "bounded queue must accept a frozen cluster below capacity");
     const auto dequeuedCluster = queue.WaitDequeue({});
     Expect(dequeuedCluster && dequeuedCluster->token == Address('f'), "bounded queue must preserve frozen cluster ownership");
+    EventDeduplicator boundedDedupe;
+    for (std::size_t index = 0; index <= EventDeduplicator::kCapacity; ++index) {
+        Expect(boundedDedupe.InsertIfNew("key-" + std::to_string(index)), "new dedupe entries must be accepted");
+    }
+    Expect(boundedDedupe.InsertIfNew("key-0") && !boundedDedupe.InsertIfNew("key-1000"),
+        "dedupe capacity must evict the least-recent entry and retain recent entries");
+    Expect(boundedDedupe.Size() == EventDeduplicator::kCapacity, "dedupe cache must remain at its explicit capacity");
+
+    MonitoringSettings soakSettings;
+    soakSettings.distinctWalletThreshold = 100;
+    soakSettings.aggregationWindow = std::chrono::seconds{60};
+    TokenClusterAggregator soakAggregator(soakSettings);
+    EventDeduplicator soakDedupe;
+    for (std::size_t index = 0; index < 14'400; ++index) {
+        const auto eventTime = now + std::chrono::seconds(index);
+        WalletBuyEvent event;
+        event.stableKey = "soak-" + std::to_string(index);
+        event.token = Address(static_cast<unsigned char>(index % 16 + 1));
+        event.wallet = Address(static_cast<unsigned char>((index / 16) % 16 + 32));
+        event.amountUsd = {100'000'000};
+        event.timestamp = eventTime;
+        Expect(soakDedupe.InsertIfNew(event.stableKey), "accelerated soak events must remain unique");
+        static_cast<void>(soakAggregator.Add(event, eventTime));
+    }
+    Expect(soakDedupe.Size() == EventDeduplicator::kCapacity && soakAggregator.ActiveTokenCount() <= 16 &&
+        soakAggregator.StoredEventCount() <= 61, "accelerated multi-hour feed must keep dedupe and rolling-window state bounded");
 
     TokenClusterAggregator representatives(settings);
     static_cast<void>(representatives.Add(Event('b', '3', 120'000'000, now - std::chrono::seconds(30), "120"), now));
@@ -158,14 +233,44 @@ int main() {
     }) : std::vector<WalletContribution>::iterator{};
     Expect(second && representative != second->wallets.end() && representative->largestUnexpiredBuy.amountUsd.micros == 250'000'000, "largest wallet buy must win");
 
+    TokenClusterAggregator expiryFallback(settings);
+    static_cast<void>(expiryFallback.Add(Event('e', '1', 250'000'000, now - std::chrono::seconds(65), "old-max"), now - std::chrono::seconds(65)));
+    static_cast<void>(expiryFallback.Add(Event('e', '1', 180'000'000, now - std::chrono::seconds(10), "new-smaller"), now - std::chrono::seconds(10)));
+    const auto fallbackRepresentative = expiryFallback.Add(Event('e', '2', 100'000'000, now, "trigger"), now);
+    const auto fallbackWallet = fallbackRepresentative ? std::find_if(fallbackRepresentative->wallets.begin(), fallbackRepresentative->wallets.end(), [](const WalletContribution& item) {
+        return item.wallet == Address('1');
+    }) : std::vector<WalletContribution>::iterator{};
+    Expect(fallbackRepresentative && fallbackWallet != fallbackRepresentative->wallets.end() &&
+        fallbackWallet->largestUnexpiredBuy.amountUsd.micros == 180'000'000,
+        "an expired maximum must fall back to a later unexpired buy from the same wallet");
+
+    TokenClusterAggregator independent(settings);
+    static_cast<void>(independent.Add(Event('6', '1', 100'000'000, now, "x1"), now));
+    static_cast<void>(independent.Add(Event('7', '1', 100'000'000, now, "y1"), now));
+    const auto frozenX = independent.Add(Event('6', '2', 100'000'000, now, "x2"), now);
+    const auto frozenY = independent.Add(Event('7', '2', 100'000'000, now, "y2"), now);
+    Expect(frozenX && frozenY && frozenX->token == Address('6') && frozenY->token == Address('7'),
+        "independent token clusters must freeze independently");
+    const auto& frozenXValue = RequireValue(frozenX, "first independent cluster must be present");
+    const auto frozenXSize = frozenXValue.wallets.size();
+    static_cast<void>(independent.Add(Event('6', '3', 100'000'000, now, "x3"), now));
+    Expect(frozenXValue.wallets.size() == frozenXSize, "frozen cluster representatives must remain immutable");
+
     TokenClusterAggregator boundaries(settings);
     Expect(!boundaries.Add(Event('c', '5', 100'000'000, now - std::chrono::seconds(60), "edge"), now), "first edge event");
     Expect(boundaries.Add(Event('c', '6', 100'000'000, now, "edge-two"), now).has_value(), "exact cutoff must remain valid");
+    TokenClusterAggregator outsideBoundary(settings);
+    Expect(!outsideBoundary.Add(Event('8', '1', 100'000'000, now - std::chrono::seconds(60) - std::chrono::system_clock::duration{1}, "too-old"), now), "first expired event");
+    Expect(!outsideBoundary.Add(Event('8', '2', 100'000'000, now, "current"), now), "one-tick-old event must be expired");
     Expect(ValidateGmgnUrl("https://gmgn.ai/bsc/token/0x1").has_value(), "GMGN HTTPS URL must be accepted");
     Expect(ValidateGmgnUrl("HTTPS://GMGN.AI/bsc/token/0x1").has_value(), "hostname comparison must be case-insensitive");
     Expect(!ValidateGmgnUrl("http://gmgn.ai/bsc/token/0x1").has_value(), "HTTP URL must be rejected");
     Expect(!ValidateGmgnUrl("https://gmgn.ai.evil.test/x").has_value(), "lookalike host must be rejected");
     Expect(!ValidateGmgnUrl("https://user@gmgn.ai/x").has_value(), "userinfo URL must be rejected");
+    std::string embeddedNullUrl{"https://gmgn.ai/ok"};
+    embeddedNullUrl.push_back('\0');
+    embeddedNullUrl.append("evil");
+    Expect(!ValidateGmgnUrl(embeddedNullUrl).has_value(), "embedded NUL URLs must be rejected");
     CooldownManager cooldown; const auto steady = std::chrono::steady_clock::time_point{};
     Expect(!cooldown.IsActive(Address('a'), steady), "fresh cooldown must be inactive");
     cooldown.MarkDelivered(Address('a'), steady);
@@ -178,6 +283,55 @@ int main() {
     const FrozenTokenCluster enrichmentCluster{Address('a'), {{Address('1'), Event('a', '1', 120'000'000, now, "enrichment-a")}, {Address('2'), Event('a', '2', 250'000'000, now, "enrichment-b")}}, now};
     enrichmentClient->info = {Address('a'), "GOOD", "https://gmgn.ai/bsc/token/example", "0.8"};
     enrichmentClient->security = TokenSecurity{Address('a'), false, false, std::nullopt, "1", "2"};
+    GmgnRequestScheduler priorityScheduler;
+    auto blockingPermit = priorityScheduler.Acquire(GmgnRequestScheduler::Priority::Enrichment,
+                                                    GmgnRequestScheduler::kEnrichmentWeight, {});
+    Expect(blockingPermit.has_value(), "scheduler must admit work when its single process slot is free");
+    std::mutex admissionMutex;
+    std::vector<GmgnRequestScheduler::Priority> admissionOrder;
+    std::jthread queuedEnrichment([&](const std::stop_token stop) {
+        const auto permit = priorityScheduler.Acquire(GmgnRequestScheduler::Priority::Enrichment,
+                                                      GmgnRequestScheduler::kEnrichmentWeight, stop);
+        if (permit) { std::scoped_lock lock(admissionMutex); admissionOrder.push_back(GmgnRequestScheduler::Priority::Enrichment); }
+    });
+    ExpectEventually([&] { return priorityScheduler.PendingCount() == 1; },
+                     "enrichment request must queue behind the active process slot");
+    std::jthread queuedFeed([&](const std::stop_token stop) {
+        const auto permit = priorityScheduler.Acquire(GmgnRequestScheduler::Priority::Feed,
+                                                      GmgnRequestScheduler::kFeedWeight, stop);
+        if (permit) { std::scoped_lock lock(admissionMutex); admissionOrder.push_back(GmgnRequestScheduler::Priority::Feed); }
+    });
+    ExpectEventually([&] { return priorityScheduler.PendingCount() == 2; },
+                     "feed request must enter the shared bounded scheduler");
+    blockingPermit.reset();
+    queuedFeed.join();
+    queuedEnrichment.join();
+    Expect(admissionOrder.size() == 2 && admissionOrder.front() == GmgnRequestScheduler::Priority::Feed,
+           "queued feed polling must take priority over queued enrichment");
+    Expect(priorityScheduler.ActiveCount() == 0 && priorityScheduler.PendingCount() == 0,
+           "scheduler permits must restore the concurrency slot on destruction");
+
+    GmgnRequestScheduler cancelledScheduler;
+    auto cancelledBlocker = cancelledScheduler.Acquire(GmgnRequestScheduler::Priority::Feed,
+                                                       GmgnRequestScheduler::kFeedWeight, {});
+    bool cancelledAdmissionSucceeded{true};
+    std::jthread cancelledWaiter([&](const std::stop_token stop) {
+        cancelledAdmissionSucceeded = cancelledScheduler.Acquire(
+            GmgnRequestScheduler::Priority::Enrichment,
+            GmgnRequestScheduler::kEnrichmentWeight, stop).has_value();
+    });
+    ExpectEventually([&] { return cancelledScheduler.PendingCount() == 1; },
+                     "pending scheduler work must be observable before cancellation");
+    cancelledScheduler.CancelPending();
+    cancelledWaiter.join();
+    Expect(!cancelledAdmissionSucceeded && cancelledScheduler.PendingCount() == 0,
+           "session cancellation must wake and reject queued GMGN work");
+    cancelledBlocker.reset();
+    cancelledScheduler.Reset();
+    Expect(cancelledScheduler.Acquire(GmgnRequestScheduler::Priority::Feed,
+                                      GmgnRequestScheduler::kFeedWeight, {}).has_value(),
+           "scheduler reset must permit a clean subsequent monitoring session");
+
     GmgnRequestScheduler scheduler;
     TokenAnalysisService analysis(enrichmentClient, scheduler, notifications, alertClock);
     const auto enriched = analysis.Analyze(enrichmentCluster, {});
@@ -218,6 +372,30 @@ int main() {
     { std::unique_lock lock(completionMutex); Expect(completionWake.wait_for(lock, std::chrono::seconds{1}, [&] { return retryDelivered; }), "executor must retain and retry a transient enrichment failure"); }
     executor.Stop();
 
+    std::mutex sessionAuthMutex;
+    std::condition_variable sessionAuthWake;
+    bool sessionAuthenticationRequired{};
+    auto sessionAuthClient = std::make_shared<AuthenticationDuringAnalysisClient>(FollowWalletPage{{
+        Event('9', '1', 100'000'000, now, "session-auth-1"),
+        Event('9', '2', 100'000'000, now, "session-auth-2")}});
+    MonitoringSession authenticationSession(sessionAuthClient, notifications, controllerClock, alertClock,
+        [&](const MonitoringUpdate& update) {
+            if (update.state == MonitoringState::AuthenticationRequired) {
+                std::scoped_lock lock(sessionAuthMutex);
+                sessionAuthenticationRequired = true;
+                sessionAuthWake.notify_one();
+            }
+        });
+    AppSettings sessionSettings;
+    sessionSettings.distinctWalletThreshold = 2;
+    Expect(authenticationSession.Start(sessionSettings), "composed monitoring session must start");
+    {
+        std::unique_lock lock(sessionAuthMutex);
+        Expect(sessionAuthWake.wait_for(lock, std::chrono::seconds{2}, [&] { return sessionAuthenticationRequired; }),
+            "authentication failure during enrichment must stop feed polling and surface authentication-required state");
+    }
+    authenticationSession.Stop();
+
     const auto settingsDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-settings-self-test";
     const auto settingsPath = settingsDirectory / "config.json";
     std::error_code cleanupError;
@@ -249,12 +427,18 @@ int main() {
     Expect(warningProcess.reason == ProcessTerminationReason::Completed && warningProcess.stderrOutput.text == "warning\n", "zero-exit warnings must remain separate stderr");
     const auto nonzeroProcess = RunFixture({L"nonzero"});
     Expect(nonzeroProcess.reason == ProcessTerminationReason::Completed && nonzeroProcess.exitCode == 7, "non-zero exit must be observable");
+    SetEnvironmentVariableW(L"GMEMMONITOR_TEST_SECRET", L"must-not-be-inherited");
+    const auto sanitizedEnvironment = RunFixture({L"sanitized-environment"});
+    SetEnvironmentVariableW(L"GMEMMONITOR_TEST_SECRET", nullptr);
+    Expect(sanitizedEnvironment.reason == ProcessTerminationReason::Completed && sanitizedEnvironment.exitCode == 0 &&
+        sanitizedEnvironment.stdoutOutput.text == "clean\n", "child stdin and inherited environment must be sanitized");
     const auto stdoutOverflow = RunFixture({L"large-stdout"}, std::chrono::seconds{2}, 1024);
     Expect(stdoutOverflow.reason == ProcessTerminationReason::OutputLimitExceeded && stdoutOverflow.stdoutOutput.truncated, "stdout over the cap must terminate safely");
     const auto stderrOverflow = RunFixture({L"large-stderr"}, std::chrono::seconds{2}, 1024, 1024);
     Expect(stderrOverflow.reason == ProcessTerminationReason::OutputLimitExceeded && stderrOverflow.stderrOutput.truncated, "stderr over the cap must terminate safely");
     const auto timedOutProcess = RunFixture({L"hang"}, std::chrono::milliseconds{100});
-    Expect(timedOutProcess.reason == ProcessTerminationReason::TimedOut, "hung child must time out");
+    Expect(timedOutProcess.reason == ProcessTerminationReason::TimedOut && timedOutProcess.duration < std::chrono::seconds{1},
+        "hung child must time out and shut down within the documented local bound");
     std::stop_source cancellation;
     cancellation.request_stop();
     const auto cancelledProcess = RunFixture({L"hang"}, std::chrono::seconds{2}, 1024, 1024, cancellation.get_token());
@@ -262,6 +446,27 @@ int main() {
     const auto processDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-process-self-test";
     const auto childMarker = processDirectory / "child.pid";
     std::filesystem::remove_all(processDirectory, cleanupError);
+
+    const auto logDirectory = std::filesystem::temp_directory_path() / "GMemMonitor-log-self-test";
+    std::filesystem::remove_all(logDirectory, cleanupError);
+    LoggingService logger(logDirectory / "gmemmonitor.log", 96, 3);
+    Expect(logger.Initialize(), "bounded diagnostic logger must initialize");
+    logger.Write(LogLevel::Info, "startup");
+    for (int index = 0; index < 12; ++index) logger.Write(LogLevel::Warning, "retrying", "bounded diagnostic");
+    logger.Write(LogLevel::Error, "authentication error", "GMGN_API_KEY=must-never-appear");
+    logger.Flush();
+    Expect(std::filesystem::exists(logDirectory / "gmemmonitor.log"), "active diagnostic log must exist");
+    Expect(std::filesystem::exists(logDirectory / "gmemmonitor.log.1"), "diagnostic logs must rotate when bounded size is reached");
+    Expect(std::distance(std::filesystem::directory_iterator(logDirectory), std::filesystem::directory_iterator{}) <= 3,
+        "diagnostic log retention must remain bounded");
+    std::string combinedLogs;
+    for (const auto& entry : std::filesystem::directory_iterator(logDirectory)) {
+        std::ifstream input(entry.path(), std::ios::binary);
+        combinedLogs.append(std::istreambuf_iterator<char>(input), {});
+    }
+    Expect(combinedLogs.find("must-never-appear") == std::string::npos && combinedLogs.find("[redacted diagnostic]") != std::string::npos,
+        "diagnostic logging must redact credential-shaped text");
+    std::filesystem::remove_all(logDirectory, cleanupError);
     std::filesystem::create_directories(processDirectory, cleanupError);
     const auto spawnedProcess = RunFixture({L"spawn-child", childMarker.wstring()}, std::chrono::milliseconds{300});
     Expect(spawnedProcess.reason == ProcessTerminationReason::TimedOut, "parent with a spawned child must time out");
@@ -276,11 +481,12 @@ int main() {
 
     const std::string followWalletFixture = ReadFollowWalletFixture();
     const auto parsedFixture = ParseFollowWalletPageJson(followWalletFixture);
-    const auto* parsedPage = std::get_if<FollowWalletPage>(&parsedFixture);
-    Expect(parsedPage && !parsedPage->events.empty(), "sanitized follow-wallet fixture must parse into events");
-    Expect(parsedPage->rejectedRecordCount == 0, "captured fixture records must satisfy the required contract");
-    Expect(parsedPage->nextPageToken.has_value(), "captured fixture must preserve the pagination-token type");
-    const auto& parsedEvent = parsedPage->events.front();
+    const auto& parsedPage = RequireAlternative<FollowWalletPage>(parsedFixture,
+        "sanitized follow-wallet fixture must parse into events");
+    Expect(!parsedPage.events.empty(), "sanitized follow-wallet fixture must contain events");
+    Expect(parsedPage.rejectedRecordCount == 0, "captured fixture records must satisfy the required contract");
+    Expect(parsedPage.nextPageToken.has_value(), "captured fixture must preserve the pagination-token type");
+    const auto& parsedEvent = parsedPage.events.front();
     Expect(parsedEvent.amountUsd.micros == 100'000'000, "numeric USD amount must parse as fixed-point micro-USD");
     const auto fixtureAddress = EvmAddress::Parse("0x1111111111111111111111111111111111111111");
     Expect(fixtureAddress && parsedEvent.wallet == *fixtureAddress && parsedEvent.token == *fixtureAddress, "fixture addresses must normalize");
@@ -297,10 +503,11 @@ int main() {
     Expect(rejected && rejected->events.empty() && rejected->rejectedRecordCount == 1, "invalid records must not enter aggregation");
     const auto stringNumericRecord = ParseFollowWalletPageJson(
         R"({"list":[{"id":"test-id","chain":"BSC","side":"BUY","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"100.000001","base_amount":"1.25","price_usd":"0.000000001","timestamp":"1700000000","base_token":{"symbol":"A\nB"},"unknown":{"future":true}}]})");
-    const auto* stringNumeric = std::get_if<FollowWalletPage>(&stringNumericRecord);
-    Expect(stringNumeric && stringNumeric->events.size() == 1, "numeric-string fields and unknown fields must parse");
-    Expect(stringNumeric->events.front().amountUsd.micros == 100'000'001, "USD numeric strings must retain micro-USD precision");
-    Expect(stringNumeric->events.front().sanitizedSymbol == "AB", "display symbols must remove control characters");
+    const auto& stringNumeric = RequireAlternative<FollowWalletPage>(stringNumericRecord,
+        "numeric-string fields and unknown fields must parse");
+    Expect(stringNumeric.events.size() == 1, "numeric-string fields and unknown fields must produce one record");
+    Expect(stringNumeric.events.front().amountUsd.micros == 100'000'001, "USD numeric strings must retain micro-USD precision");
+    Expect(stringNumeric.events.front().sanitizedSymbol == "AB", "display symbols must remove control characters");
     Expect(SanitizeDisplayText("ABC" "\xE2\x80\xAE" "def") == "ABCdef", "display symbols must remove bidirectional formatting characters");
     Expect(SanitizeDisplayText("A" "\xD8\x9C" "B" "\xE2\x80\x8E" "C" "\xE2\x80\x8F" "D") == "ABCD",
         "display symbols must remove Arabic letter mark and left-to-right/right-to-left marks");
@@ -316,10 +523,24 @@ int main() {
     const auto* emptyIdPage = std::get_if<FollowWalletPage>(&emptyIdFallbackRecord);
     Expect(emptyIdPage && emptyIdPage->events.size() == 1 && emptyIdPage->events.front().stableKey.rfind("fallback:", 0) == 0,
         "empty GMGN ids and leading-dot decimals must use a safe fallback key");
+    const auto invalidIdFallbackRecord = ParseFollowWalletPageJson(
+        R"({"list":[{"id":"bad id\u000a","chain":"bsc","side":"buy","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"100","base_amount":"1","price_usd":"1","timestamp":"1700000000"}]})");
+    const auto* invalidIdPage = std::get_if<FollowWalletPage>(&invalidIdFallbackRecord);
+    Expect(invalidIdPage && invalidIdPage->events.size() == 1 && invalidIdPage->events.front().gmgnRecordId.empty() &&
+        invalidIdPage->events.front().stableKey.rfind("fallback:", 0) == 0, "invalid GMGN ids must use the canonical fallback key");
+    const auto negativeUsdRecord = ParseFollowWalletPageJson(
+        R"({"list":[{"chain":"bsc","side":"buy","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"-1","base_amount":"1","price_usd":"1","timestamp":"1700000000"}]})");
+    Expect(std::get<FollowWalletPage>(negativeUsdRecord).rejectedRecordCount == 1, "negative USD activity must be rejected");
+    const auto timestampOverflowRecord = ParseFollowWalletPageJson(
+        R"({"list":[{"chain":"bsc","side":"buy","transaction_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","maker":"0x1111111111111111111111111111111111111111","base_address":"0x2222222222222222222222222222222222222222","amount_usd":"100","base_amount":"1","price_usd":"1","timestamp":"9223372036854775807"}]})");
+    Expect(std::get<FollowWalletPage>(timestampOverflowRecord).rejectedRecordCount == 1, "timestamps outside system_clock range must be rejected");
 
     const auto tokenInfo = ParseTokenInfoJson(ReadFixture("token_info_bsc.json"));
     const auto* info = std::get_if<TokenInfo>(&tokenInfo);
     Expect(info && info->sanitizedSymbol == "redacted" && info->lockedRatio == "1", "token-info fixture must parse typed metadata");
+    const auto emptySymbolInfo = ParseTokenInfoJson(R"({"address":"0x1111111111111111111111111111111111111111","symbol":"","link":{"gmgn":null},"locked_ratio":null,"future":true})");
+    Expect(std::get_if<TokenInfo>(&emptySymbolInfo) && std::get<TokenInfo>(emptySymbolInfo).sanitizedSymbol.empty(),
+        "empty optional display symbols and null optional facts must remain usable with address fallback");
     const auto tokenSecurity = ParseTokenSecurityJson(ReadFixture("token_security_bsc.json"));
     const auto* security = std::get_if<TokenSecurity>(&tokenSecurity);
     Expect(security && security->honeypot == false && security->openSource == false && security->renounced == false,

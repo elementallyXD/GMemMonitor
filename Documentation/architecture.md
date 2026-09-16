@@ -63,8 +63,8 @@ classifies it as `RateLimited` without exposing raw stderr. The implemented
 `GmgnCliClient` records a local cooldown from the CLI's reported remaining duration
 (with a small safety margin) and suppresses further requests from that client. If no
 duration is available, it uses a conservative 60-second cooldown. The planned global
-`GmgnRequestScheduler` remains responsible for coordinating feed and enrichment work;
-the current dashboard does not yet start that controller.
+`GmgnRequestScheduler` coordinates feed and enrichment work, and the dashboard composes
+one `MonitoringSession` when the user explicitly starts monitoring.
 
 ```mermaid
 sequenceDiagram

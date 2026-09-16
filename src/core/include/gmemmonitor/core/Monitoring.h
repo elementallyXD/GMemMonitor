@@ -45,6 +45,7 @@ class EventDeduplicator final {
 public:
     static constexpr std::size_t kCapacity = 1'000;
     [[nodiscard]] bool InsertIfNew(std::string key);
+    [[nodiscard]] std::size_t Size() const noexcept { return entries_.size(); }
     void Clear() noexcept;
 private:
     std::list<std::string> lru_;
@@ -57,6 +58,8 @@ public:
     [[nodiscard]] std::optional<FrozenTokenCluster> Add(const WalletBuyEvent& event, std::chrono::system_clock::time_point now);
     void Prune(std::chrono::system_clock::time_point now);
     void Clear() noexcept;
+    [[nodiscard]] std::size_t ActiveTokenCount() const noexcept { return active_.size(); }
+    [[nodiscard]] std::size_t StoredEventCount() const noexcept;
 private:
     using Events = std::deque<WalletBuyEvent>;
     using WalletEvents = std::unordered_map<std::string, Events>;
@@ -100,6 +103,7 @@ public:
     WalletActivityPoller& operator=(const WalletActivityPoller&) = delete;
 
     [[nodiscard]] bool Start(const AppSettings& settings);
+    void RequestStop() noexcept;
     void Stop() noexcept;
     [[nodiscard]] static std::chrono::milliseconds RetryDelay(std::size_t consecutiveFailures, std::uint32_t jitterBasisPoints = 10'000) noexcept;
 

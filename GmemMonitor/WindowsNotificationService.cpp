@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "WindowsNotificationService.h"
+#include "ApplicationLog.h"
 
 namespace gmemmonitor::platform {
 
@@ -49,7 +50,13 @@ bool WindowsNotificationService::Initialize() noexcept
         manager.Register();
         registered_ = true;
         return true;
+    } catch (winrt::hresult_error const& error) {
+        WriteApplicationLog(gmemmonitor::core::LogLevel::Error,
+            "notification registration HRESULT", std::to_string(error.code().value));
+        return false;
     } catch (...) {
+        WriteApplicationLog(gmemmonitor::core::LogLevel::Error,
+            "notification registration failed with an unknown exception");
         return false;
     }
 }

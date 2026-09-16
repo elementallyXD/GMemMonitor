@@ -34,3 +34,5 @@
 #include <winrt/Microsoft.Windows.AppNotifications.h>
 #include <winrt/Microsoft.Windows.AppNotifications.Builder.h>
 #include <wil/cppwinrt_helpers.h>
+#include <microsoft.ui.xaml.window.h>
+#include "gmemmonitor/core/Logging.h"

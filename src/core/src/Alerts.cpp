@@ -19,7 +19,7 @@ namespace {
 std::optional<std::string> ValidateGmgnUrl(const std::string_view value) {
     constexpr std::string_view scheme{"https://"};
     if (value.size() <= scheme.size() || !std::equal(scheme.begin(), scheme.end(), value.begin(), [](const char left, const char right) { return left == std::tolower(static_cast<unsigned char>(right)); })) return std::nullopt;
-    if (value.find_first_of("\r\n\\\0") != std::string_view::npos) return std::nullopt;
+    if (value.find_first_of("\r\n\\") != std::string_view::npos || value.find('\0') != std::string_view::npos) return std::nullopt;
     const auto authorityEnd = value.find_first_of("/?#", scheme.size());
     const auto authority = value.substr(scheme.size(), authorityEnd - scheme.size());
     if (authority.empty() || authority.find('@') != std::string_view::npos || authority.find(':') != std::string_view::npos) return std::nullopt;

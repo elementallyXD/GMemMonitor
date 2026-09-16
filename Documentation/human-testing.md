@@ -1,8 +1,8 @@
 # Human Testing and GMGN Setup
 
-This guide is for the current development state of GMemMonitor. It separates safe
-offline verification from an opt-in live GMGN contract check. The WinUI dashboard is
-currently a shell; clicking **Start monitoring** does not yet start live monitoring.
+This guide separates safe offline verification, opt-in live GMGN checks, and the manual
+Windows acceptance matrix. The dashboard now starts the composed monitoring session only
+when the pinned runtime exists and native notification registration succeeds.
 
 ## Official GMGN references
 
@@ -45,10 +45,8 @@ the file directly; `gmgn-cli` loads it.
 Open **Developer PowerShell for Visual Studio** in the repository root and run:
 
 ```powershell
-MSBuild .\GmemMonitor\GmemMonitor.slnx /m /p:Configuration=Debug /p:Platform=x64
-
-& ".\GmemMonitor\bin\x64\Debug\GmgnContractProbe.exe" --self-test
-& ".\GmemMonitor\x64\Debug\GMemMonitor.MonitoringTests.exe"
+.\scripts\Provision-PinnedRuntime.ps1
+.\scripts\Test-Workspace.ps1 -Configuration All
 ```
 
 Expected output contains `Self-test passed.` and `Monitoring self-tests passed.`.
@@ -161,8 +159,9 @@ on the same public IP are outside its control.
 
 ## 6. Current acceptance boundary
 
-A successful live probe verifies only the CLI contract and safe process invocation.
-It does not yet demonstrate end-to-end dashboard monitoring, alert delivery,
-pagination behavior, or portable-release readiness. Record only sanitized facts in
-`Documentation/gmgn-cli-contract.md`; never save raw feed responses, wallet lists,
-transaction data, credentials, signatures, or logs in the repository.
+A successful live probe verifies the upstream CLI contract; the dashboard and offline
+pipeline are validated separately. It still does not establish overlap/order behavior,
+lossless pagination, notification activation after process exit, or clean-VM portability.
+Record only sanitized facts in `Documentation/gmgn-cli-contract.md`; never save raw feed
+responses, wallet lists, transaction data, credentials, signatures, or logs in the
+repository.
