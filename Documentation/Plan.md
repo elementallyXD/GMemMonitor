@@ -8,11 +8,12 @@ GMemMonitor is a personal-use, read-only Windows 11 x64 application. It monitors
 
 ## Current repository state
 
-The repository contains an unpackaged/self-contained WinUI 3 dashboard shell at
-`GmemMonitor/GmemMonitor.slnx`, plus partial core primitives. It is not completed
-application functionality: the dashboard does not yet dispatch to a monitoring
-controller, and no successful GMGN response fixture exists. The authoritative gap and
-phase review is [implementation-audit.md](implementation-audit.md).
+The repository contains an unpackaged/self-contained WinUI 3 MVP at
+`GmemMonitor/GmemMonitor.slnx`, the complete core session pipeline, sanitized successful
+GMGN fixtures, native notifications, tray/lifecycle integration, and portable staging.
+Offline gates pass locally. Live overlap/pagination observations and clean-VM Windows
+acceptance remain external release-validation work; see
+[implementation-audit.md](implementation-audit.md).
 
 ## Phase order
 

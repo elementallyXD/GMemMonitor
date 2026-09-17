@@ -1,0 +1,7 @@
+{
+  "name": "gmgn-cli",
+  "private": true,
+  "dependencies": {
+    "gmgn-cli": "1.5.7"
+  }
+}

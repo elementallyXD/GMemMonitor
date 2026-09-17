@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MainWindow.g.h"
+#include "TrayIconService.h"
 
 namespace winrt::GmemMonitor::implementation
 {
@@ -20,10 +21,16 @@ namespace winrt::GmemMonitor::implementation
         void ValidateSettings();
         void SetMonitoringControls(bool active);
         void ApplyMonitoringUpdate(gmemmonitor::core::MonitoringUpdate const& update);
-        void StopMonitoring() noexcept;
+        void ApplyAnalysisUpdate(gmemmonitor::core::AnalysisUpdate const& update);
+        void ToggleMonitoring();
+        void OpenFromTray();
+        void SuspendMonitoring() noexcept;
+        void ResumeStopped() noexcept;
+        void StopMonitoring(bool updateControls = true) noexcept;
         int32_t myProperty_{};
         std::unique_ptr<DashboardClock> clock_;
         std::unique_ptr<gmemmonitor::core::MonitoringSession> session_;
+        std::unique_ptr<gmemmonitor::platform::TrayIconService> trayIcon_;
     };
 }
 

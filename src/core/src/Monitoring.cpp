@@ -53,6 +53,18 @@ std::optional<FrozenTokenCluster> TokenClusterAggregator::FreezeIfQualified(cons
 
 void TokenClusterAggregator::Clear() noexcept { active_.clear(); }
 
+std::size_t TokenClusterAggregator::StoredEventCount() const noexcept {
+    std::size_t count{};
+    for (const auto& [token, wallets] : active_) {
+        static_cast<void>(token);
+        for (const auto& [wallet, events] : wallets) {
+            static_cast<void>(wallet);
+            count += events.size();
+        }
+    }
+    return count;
+}
+
 MonitoringController::MonitoringController(IClock& clock) : clock_(clock) {}
 
 bool MonitoringController::Start(const AppSettings& settings) {
@@ -129,10 +141,16 @@ bool WalletActivityPoller::Start(const AppSettings& settings) {
     return true;
 }
 
-void WalletActivityPoller::Stop() noexcept {
+void WalletActivityPoller::RequestStop() noexcept {
     if (worker_.joinable()) {
         worker_.request_stop();
         wake_.notify_all();
+    }
+}
+
+void WalletActivityPoller::Stop() noexcept {
+    RequestStop();
+    if (worker_.joinable()) {
         worker_.join();
     }
     controller_.Stop();
@@ -147,10 +165,10 @@ std::chrono::milliseconds WalletActivityPoller::RetryDelay(const std::size_t con
 }
 
 void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::seconds pollInterval) {
-    const auto initialStarted = std::chrono::steady_clock::now();
     const auto fetch = [this, stop]() -> GmgnResult<FollowWalletPage> {
         if (!scheduler_) return client_->FetchFollowWalletBuys(stop);
-        const auto permit = scheduler_->Acquire(GmgnRequestScheduler::Priority::Feed, stop);
+        const auto permit = scheduler_->Acquire(GmgnRequestScheduler::Priority::Feed,
+                                                GmgnRequestScheduler::kFeedWeight, stop);
         return permit ? client_->FetchFollowWalletBuys(stop) : GmgnFailure{GmgnFailureCode::Cancelled, "GMGN feed request was cancelled before admission."};
     };
     auto initial = fetch();
@@ -159,7 +177,9 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
     if (stop.stop_requested() || controller_.State() == MonitoringState::AuthenticationRequired) return;
     std::size_t failures{};
     std::optional<std::chrono::milliseconds> forcedDelay;
-    auto nextHealthyDeadline = initialStarted + pollInterval;
+    // Healthy cadence is measured from completion. A slow CLI request therefore
+    // delays the next poll instead of allowing calls to bunch up.
+    auto nextHealthyDeadline = std::chrono::steady_clock::now() + pollInterval;
     if (initialUpdate.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*initialUpdate.retryAfter);
     while (!stop.stop_requested()) {
         const bool retrying = controller_.State() == MonitoringState::Retrying;
@@ -171,14 +191,13 @@ void WalletActivityPoller::Run(const std::stop_token stop, const std::chrono::se
         std::unique_lock lock(mutex);
         if (wake_.wait_for(lock, stop, delay, [] { return false; })) return;
         if (stop.stop_requested()) return;
-        const auto requestStarted = std::chrono::steady_clock::now();
         auto result = fetch();
         const auto update = controller_.HandlePollResult(result);
         if (!Publish(update, stop)) return;
         if (update.state == MonitoringState::AuthenticationRequired || update.state == MonitoringState::Stopped) return;
         if (update.state == MonitoringState::Monitoring) {
             failures = 0;
-            nextHealthyDeadline = requestStarted + pollInterval;
+            nextHealthyDeadline = std::chrono::steady_clock::now() + pollInterval;
         }
         if (update.retryAfter) forcedDelay = std::chrono::duration_cast<std::chrono::milliseconds>(*update.retryAfter);
     }

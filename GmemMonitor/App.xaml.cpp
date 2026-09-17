@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "App.xaml.h"
+#include "ApplicationLog.h"
 #include "MainWindow.xaml.h"
 
 using namespace winrt;
@@ -33,7 +34,16 @@ namespace winrt::GmemMonitor::implementation
 
     App::~App()
     {
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "application teardown started");
+        // The application object is normally destroyed as a consequence of the
+        // last window closing. Calling Close() again here re-enters WinUI's close
+        // path and can fail-fast during process teardown. Releasing the already
+        // closed window runs MainWindow's idempotent session/tray cleanup first.
+        window = nullptr;
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "application window released");
         gmemmonitor::platform::AppNotificationService().Shutdown();
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "notification teardown completed");
+        gmemmonitor::platform::ShutdownApplicationLog();
     }
 
     /// <summary>
@@ -42,8 +52,11 @@ namespace winrt::GmemMonitor::implementation
     /// <param name="e">Details about the launch request and process.</param>
     void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e)
     {
+        static_cast<void>(gmemmonitor::platform::InitializeApplicationLog());
+        gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Info, "startup");
         // MainWindow presents a persistent error and prevents monitoring if this fails.
         if (!gmemmonitor::platform::AppNotificationService().Initialize()) {
+            gmemmonitor::platform::WriteApplicationLog(gmemmonitor::core::LogLevel::Error, "notification registration failed");
             OutputDebugStringW(L"GMemMonitor: Windows notification registration failed.\n");
         }
         window = make<MainWindow>();

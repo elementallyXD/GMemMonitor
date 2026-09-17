@@ -249,6 +249,12 @@ private:
     return true;
 }
 
+[[nodiscard]] bool StringAllowEmpty(const JsonValue* value, std::string* result) {
+    if (!value || value->type != JsonValue::Type::String) return false;
+    *result = value->scalar;
+    return true;
+}
+
 [[nodiscard]] bool IsAsciiEqualInsensitive(const std::string_view left, const std::string_view right) {
     if (left.size() != right.size()) return false;
     for (std::size_t index = 0; index < left.size(); ++index) {
@@ -270,7 +276,11 @@ private:
     std::int64_t seconds{};
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), seconds);
     if (error != std::errc{} || end != text.data() + text.size() || seconds < 0) return false;
-    *output = std::chrono::system_clock::time_point{std::chrono::seconds{seconds}};
+    const auto maximumSeconds = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::duration::max()).count();
+    if (seconds > maximumSeconds) return false;
+    *output = std::chrono::system_clock::time_point{
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::seconds{seconds})};
     return true;
 }
 
@@ -288,6 +298,14 @@ private:
         }
     }
     return hasDigits;
+}
+
+[[nodiscard]] bool IsValidRecordId(const std::string_view value) {
+    if (value.empty() || value.size() > 512) return false;
+    return std::all_of(value.begin(), value.end(), [](const unsigned char character) {
+        return std::isalnum(character) != 0 || character == '+' || character == '/' ||
+            character == '=' || character == '-' || character == '_';
+    });
 }
 
 [[nodiscard]] bool ParseRecord(const JsonValue& record, WalletBuyEvent* event) {
@@ -311,13 +329,15 @@ private:
     const auto wallet = EvmAddress::Parse(maker);
     const auto tokenAddress = EvmAddress::Parse(token);
     const auto money = MoneyUsd::Parse(amountUsd);
-    if (!wallet || !tokenAddress || !money || !IsPlainDecimal(priceUsd) || !IsPlainDecimal(baseAmount)) return false;
+    if (!wallet || !tokenAddress || !money || money->micros < 0 ||
+        !IsPlainDecimal(priceUsd) || !IsPlainDecimal(baseAmount)) return false;
 
     WalletBuyEvent parsed;
     if (const JsonValue* id = FindUnique(record, "id")) {
-        if (id->type != JsonValue::Type::String || id->scalar.size() > 512) return false;
-        parsed.gmgnRecordId = id->scalar;
-        if (!parsed.gmgnRecordId.empty()) parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
+        if (id->type == JsonValue::Type::String && IsValidRecordId(id->scalar)) {
+            parsed.gmgnRecordId = id->scalar;
+            parsed.stableKey = "gmgn:" + parsed.gmgnRecordId;
+        }
     }
     if (!ParseTimestamp(FindUnique(record, "timestamp"), &parsed.timestamp)) return false;
 
@@ -415,13 +435,13 @@ GmgnResult<TokenInfo> ParseTokenInfoJson(const std::string_view json) {
     if (!ParseRootObject(json, &root, &failure)) return failure;
     std::string address;
     std::string symbol;
-    if (!StrictString(FindUnique(root, "address"), &address) || !StrictString(FindUnique(root, "symbol"), &symbol)) return SchemaFailure();
+    if (!StrictString(FindUnique(root, "address"), &address) || !StringAllowEmpty(FindUnique(root, "symbol"), &symbol)) return SchemaFailure();
     const auto token = EvmAddress::Parse(address);
     if (!token) return SchemaFailure();
     TokenInfo info{*token, SanitizeDisplayText(symbol), {}, std::nullopt};
     if (const JsonValue* link = FindUnique(root, "link"); link && link->type == JsonValue::Type::Object) {
         const JsonValue* gmgn = FindUnique(*link, "gmgn");
-        if (gmgn && gmgn->type != JsonValue::Type::Null && !StrictString(gmgn, &info.gmgnLink)) return SchemaFailure();
+        if (gmgn && gmgn->type != JsonValue::Type::Null && !StringAllowEmpty(gmgn, &info.gmgnLink)) return SchemaFailure();
     }
     bool valid = true;
     info.lockedRatio = OptionalDecimal(FindUnique(root, "locked_ratio"), &valid);

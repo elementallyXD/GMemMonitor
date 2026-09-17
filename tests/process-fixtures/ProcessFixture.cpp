@@ -1,8 +1,10 @@
 #include <windows.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -30,6 +32,16 @@ int wmain(const int argc, wchar_t* argv[]) {
     if (mode == L"partial-writes") { WriteRepeated(GetStdHandle(STD_OUTPUT_HANDLE), 'p', 128, true); return 0; }
     if (mode == L"warning") { WriteFile(GetStdHandle(STD_ERROR_HANDLE), "warning\n", 8, nullptr, nullptr); return 0; }
     if (mode == L"nonzero") { WriteFile(GetStdHandle(STD_ERROR_HANDLE), "failed\n", 7, nullptr, nullptr); return 7; }
+    if (mode == L"sanitized-environment") {
+        wchar_t value[8]{};
+        const bool leaked = GetEnvironmentVariableW(L"GMEMMONITOR_TEST_SECRET", value, static_cast<DWORD>(std::size(value))) != 0;
+        DWORD bytesRead{};
+        char input{};
+        const bool nullInput = ReadFile(GetStdHandle(STD_INPUT_HANDLE), &input, 1, &bytesRead, nullptr) != FALSE && bytesRead == 0;
+        const char* message = !leaked && nullInput ? "clean\n" : "unsafe\n";
+        WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), message, static_cast<DWORD>(strlen(message)), nullptr, nullptr);
+        return !leaked && nullInput ? 0 : 10;
+    }
     if (mode == L"hang") { Sleep(INFINITE); }
     if (mode == L"child-sleep") {
         std::ofstream(Argument(argc, argv, 2)) << GetCurrentProcessId();

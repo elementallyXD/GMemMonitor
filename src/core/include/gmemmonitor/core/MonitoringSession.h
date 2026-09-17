@@ -3,6 +3,7 @@
 #include "gmemmonitor/core/Analysis.h"
 #include "gmemmonitor/core/Monitoring.h"
 
+#include <atomic>
 #include <functional>
 #include <memory>
 
@@ -23,16 +24,24 @@ public:
     MonitoringSession& operator=(const MonitoringSession&) = delete;
 
     [[nodiscard]] bool Start(const AppSettings& settings);
+    // Signals cancellation without joining worker threads. Intended for the
+    // time-bounded Windows suspend callback; Stop() completes the join later.
+    void RequestStop() noexcept;
     void Stop() noexcept;
     [[nodiscard]] MonitoringState State() const noexcept;
 
 private:
+    void HandleAnalysisUpdate(const AnalysisUpdate& update);
+
     std::shared_ptr<IGmgnClient> client_;
+    MonitoringHandler monitoringHandler_;
+    AnalysisHandler analysisHandler_;
     GmgnRequestScheduler scheduler_;
     MonitoringController controller_;
     TokenAnalysisService analysisService_;
     TokenAnalysisExecutor analysisExecutor_;
     WalletActivityPoller poller_;
+    std::atomic_bool started_{};
 };
 
 } // namespace gmemmonitor::core
