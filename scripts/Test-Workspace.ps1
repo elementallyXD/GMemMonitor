@@ -49,9 +49,9 @@ if ($configurations -contains 'Debug') {
 }
 
 $trackedTextExtensions = @('.cpp', '.h', '.hpp', '.idl', '.xaml', '.xml', '.json', '.md', '.ps1', '.yml', '.yaml', '.txt', '.config', '.manifest')
-$trackedTextFiles = git -C $workspace ls-files | Where-Object {
+$trackedTextFiles = git -C $workspace ls-files --cached --others --exclude-standard | Sort-Object -Unique | Where-Object {
     $trackedTextExtensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant()
-} | ForEach-Object { Join-Path $workspace $_ }
+} | ForEach-Object { Join-Path $workspace $_ } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
 $patterns = '(GMGN_API_KEY\s*=\s*[^\s"'']{12,}|GMGN_PRIVATE_KEY\s*=\s*[^\s"'']{12,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|AKIA[0-9A-Z]{16})'
 $matches = $trackedTextFiles | Select-String -Pattern $patterns | Where-Object {
     $_.Line -notmatch 'gmgn_your_actual_key|full_private_key_body|\$secretPattern|\$patterns'

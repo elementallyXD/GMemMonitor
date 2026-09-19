@@ -22,8 +22,9 @@ Runtime components
 Development-only manifest entries
 ---------------------------------
 
-nlohmann/json, spdlog, and GoogleTest are declared development dependencies. They
-are not linked into or copied into the current portable package.
+nlohmann/json, spdlog, and GoogleTest remain in the unused vcpkg manifest.
+The current projects use custom parsing, logging, and self-tests; these three
+libraries are not linked into or copied into the portable package.
 
 MIT License text
 ----------------

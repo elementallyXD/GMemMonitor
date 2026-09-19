@@ -1,145 +1,116 @@
-# GMGN CLI Contract — Phase 01
+# GMGN CLI contract
 
-## Status
+This file owns the application's GMGN boundary and sanitized observations. Source and
+fixtures establish local behavior; public provider documentation can change independently
+of the pinned CLI. No authenticated request was made during the 2026-09-19 documentation review.
 
-The package metadata is pinned. An earlier live BSC `follow-wallet` attempt from the
-documented development environment reached GMGN and received an IP rate-limit response
-(HTTP 429). On 2026-09-14, after a subscription change, a subsequent single probe
-completed with exit code `0`, syntactically valid JSON stdout, and no stderr. The probe
-reported 146,210 stdout bytes without printing or saving raw account data.
+## Pins and operations
 
-This verifies successful authentication and the process contract. A sanitized
-`follow_wallet_buy.json` fixture was captured on 2026-09-14. It verifies that the root
-is a JSON object containing a `list` array and a string `next_page_token`. Feed records
-contain string identifiers/addresses and numeric representations for USD values,
-prices, token quantities, and timestamps. The fixture deliberately replaces every
-response value, so it does not establish record ordering or ID stability.
+The tested pair is Node 24.12.0 / gmgn-cli 1.5.7. Exact hashes and paths are authoritative
+in [runtime-manifest.json](../packaging/runtime-manifest.json) and the
+[npm lockfile](../packaging/gmgn-cli/package-lock.json).
 
-On the same date, `token-info` and `token-security` probes for a public BSC token each
-completed with exit code `0`, valid JSON stdout, and no stderr. Their sanitized
-fixtures are `token_info_bsc.json` and `token_security_bsc.json`. Token-info contains
-an address, symbol, numeric `locked_ratio`, and a `link` object whose `gmgn` member is
-a string. Token-security contains explicit boolean `is_honeypot`, `is_open_source`,
-and `is_renounced` members plus string tax fields. The fixtures establish only shape
-and types: every response value has been replaced.
+[GmgnCliClient](../src/core/src/GmgnClient.cpp) invokes bundled Node with the CLI entry
+followed by these fixed arguments:
 
-No public, supported CLI cursor option has been verified. The MVP therefore continues
-to request the latest 100 records without inventing a page-token argument.
+~~~text
+track follow-wallet --chain bsc --side buy --limit 100 --raw
+token info --chain bsc --address <normalized-token> --raw
+token security --chain bsc --address <normalized-token> --raw
+~~~
 
-On 2026-09-07, the pinned CLI's non-network `config --check` command exited with `1`
-in one development execution context. It did not detect an external GMGN API key there.
-This check did not display, copy, or inspect any credential value. The successful
-2026-09-14 account probes prove that the user's normal execution context can read the
-external configuration; the earlier result must not be treated as a user configuration
-failure.
+The feed uses API-key plus request-signing authentication from the external CLI configuration;
+see [setup](operations.md). It uses current account follows, with no local enumeration or
+frozen list. The USD filter is local: the app does not pass `--min-amount-usd`.
 
-## Support-reported Free-plan limitation — 2026-09-08
+## Captured shapes
 
-After a clean single-request test, GMGN support reported that trading-related endpoints,
-including `GET /v1/trade/follow_wallet`, are temporarily limited on the Free plan. It
-reported that ordinary read/query endpoints are unaffected and that Plus-plan access is
-required for this endpoint at present. This is a time-sensitive support statement, not a
-permanent protocol guarantee; revalidate it before release or after changing plans.
+On 2026-09-14, the previous project record reports successful feed/info/security probes
+(exit 0, valid JSON, no stderr) and sanitized captures. The checked-in fixtures preserve
+structure/types while replacing **every value**:
 
-The endpoint is read-only for this application but is nevertheless plan-gated. Do not
-attempt to work around the restriction with extra keys, retries, or IP changes. The MVP
-cannot meet its dynamic followed-wallet monitoring requirement on the Free plan.
-
-## Sources
-
-- [GMGN Agent API](https://docs.gmgn.ai/index/gmgn-agent-api): API-key/key-pair setup and external `~/.config/gmgn/.env` convention.
-- [Official CLI usage](https://github.com/GMGNAI/gmgn-skills/blob/main/docs/cli-usage.md): command syntax for followed-wallet monitoring.
-- [Official tracking skill](https://github.com/GMGNAI/gmgn-skills/blob/main/skills/gmgn-track/SKILL.md): signed authentication, route weights, response fields, and rate-limit guidance.
-- [GMGN IP rate-limit guidance](https://docs.gmgn.ai/index/cooperation-api-data-crawling-ip-whitelist): default request-frequency guidance and the support channel for suspected erroneous blocks.
-
-For `track follow-wallet`, the CLI documentation is the specific source: it states that this operation requires `GMGN_API_KEY` and `GMGN_PRIVATE_KEY` for signed authentication. The generic Agent API page describes private-key use primarily in trading examples, so it must not be interpreted as overriding the command-specific requirement.
-
-## Pinned metadata
-
-| Item | Value |
+| Fixture | Fields consumed by the application |
 |---|---|
-| Node.js used for the development probe | `24.12.0` |
-| CLI package | `gmgn-cli` |
-| CLI version | `1.5.7` |
-| Source repository | `GMGNAI/gmgn-skills` |
-| npm integrity | `sha512-vxI0uDlhRL4Rn6tJV3z2VRPGnmKDneA6/WdcwlFvHyUMh6pCClLF4f8Srk1xpoJvb/DhxXk0K/b1cTSA98sNJQ==` |
-| Package entry point | `dist/index.js` |
+| [follow_wallet_buy.json](../tests/contract/fixtures/gmgn/follow_wallet_buy.json) | Object with `list` and `next_page_token`; records use `id`, `chain`, `side`, `maker`, `base_address`, `transaction_hash`, `amount_usd`, `base_amount`, `price_usd`, `timestamp`, optional `base_token.symbol` |
+| [token_info_bsc.json](../tests/contract/fixtures/gmgn/token_info_bsc.json) | `address`, `symbol`, optional `locked_ratio` and `link.gmgn` |
+| [token_security_bsc.json](../tests/contract/fixtures/gmgn/token_security_bsc.json) | `address`, optional boolean `is_honeypot`/`is_open_source`/`is_renounced`, optional tax fields |
 
-The corresponding machine-readable record is [runtime-manifest.json](../packaging/runtime-manifest.json). Package files are intentionally not checked in during this phase.
+The [parser](../src/core/src/GmgnJsonParser.cpp) accepts supported string/number
+representations, normalizes strict addresses and fixed-point USD, and skips invalid feed
+records with a rejection count. Optional absent/null risk facts stay unavailable.
+Syntax/root failures reject the response. The fixtures cannot prove ordering, stable IDs,
+real values/units, account membership, or live monitoring coverage.
 
-## Required command contract
+## Provider limitations and drift
 
-The probe executes only this followed-wallet command:
+- The response includes `next_page_token`, but no supported feed cursor argument is
+  verified for 1.5.7. The app requests only the latest 100 and does not claim lossless
+  coverage. Overlapping-poll ordering and ID stability still need observations.
+- On 2026-09-08, project notes recorded GMGN support reporting temporary Free-plan
+  restrictions and Plus access for this endpoint. Success was recorded after a subscription
+  change on September 14. Neither establishes current entitlements.
+- **Mismatch found 2026-09-19:** the current official
+  [tracking reference](https://github.com/GMGNAI/gmgn-skills/blob/main/skills/gmgn-track/SKILL.md)
+  lists feed weight **10**, with Free 5/5, Plus 20/20, Pro 50/50 rate/capacity.
+  The code still uses feed weight **3**, enrichment weight 1, and a fixed 20/20 bucket.
+  Reconcile this before release; pinning the client does not pin server policy.
+- The [CLI reference](https://github.com/GMGNAI/gmgn-skills/blob/main/docs/cli-usage.md)
+  still shows signed dynamic follows and limit 1–100 without a feed cursor option.
+  Its moving main branch is a reference, not a versioned contract fixture.
+- [GMGN Agent API](https://docs.gmgn.ai/index/gmgn-agent-api) documents IPv4-only access.
+  The application does not alter networking or bypass provider restrictions.
 
-```text
-node.exe <pinned-cli-entry> track follow-wallet --chain bsc --side buy --limit 100 --raw
-```
+A historical September 7 observation received HTTP 429 / RATE_LIMIT_EXCEEDED, followed
+by Node's `UV_HANDLE_CLOSING` assertion and Windows exit `0xC0000409`. That sequence
+was a post-rate-limit CLI/runtime failure, not evidence of malformed credentials.
 
-Documented properties:
+The current application recognizes HTTP 429 in stderr or RATE_LIMIT_EXCEEDED in captured
+output. It extracts `Ns remaining` from stderr, adds two seconds, and caps the result
+at 300 seconds; without a parsed duration it waits 62 seconds. It does not parse a reset
+timestamp or every provider ban shape. Manual checks must respect the provider's full
+reset time, which can exceed the application's wait. Generic nonzero exits also remain
+distinct from typed transient errors; see [required fixes](roadmap.md).
 
-| Property | Contract |
-|---|---|
-| Supported chain | `bsc` |
-| Direction filter | `buy` |
-| Limit | Integer from 1 to 100; MVP uses 100 |
-| Authentication | API key plus signing private key |
-| Route weight | 3 under the documented 20-token rate/capacity bucket |
-| Output | Raw JSON on stdout when `--raw` is supplied |
-| Response root | `list` plus optional `next_page_token` |
-| Dedupe candidate | Record `id` |
+## Probe and fixtures
 
-The public CLI options list does not document a follow-wallet cursor/page-token argument, even though the response documents `next_page_token`. The MVP therefore treats pagination as unresolved until a live, officially supported behavior is confirmed. It must not pass undocumented options.
+Build Debug using [development](development.md). From the repository root, use the
+bundled runtime and absolute paths:
 
-## Required live observations
+~~~powershell
+$probe = (Resolve-Path ./GmemMonitor/bin/x64/Debug/GmgnContractProbe.exe).Path
+$node = (Resolve-Path ./runtime/node.exe).Path
+$cli = (Resolve-Path ./runtime/gmgn-cli/node_modules/gmgn-cli/dist/index.js).Path
+& $probe --node $node --cli-entry $cli --action version
+& $probe --node $node --cli-entry $cli --action config-check
+~~~
 
-Run the probe only after installing a pinned CLI copy under a controlled runtime folder and configuring the GMGN credentials outside the repository. Record only sanitized facts:
+Both actions are non-network. Version checks CLI launch only. Config-check reports API-key
+presence, not validity, signing-key correctness, or feed entitlement. Require a positive
+preflight before opting into a live check.
 
-- CLI/Node versions and package integrity verification result.
-- Authentication success/failure category.
-- Root JSON shape, key types, list ordering, ID stability, and overlap behavior.
-- Pagination support or lack of supported support.
-- Exit code and whether stdout is valid JSON.
-- Error category for timeout, 401/403, 429, and malformed output where safely observable.
-- Token-info and token-security response shape for a sanitized BSC fixture.
+Stop monitoring and other probes first; do not request during a provider cooldown.
+For one intentional live feed check, run **one** of these alternatives:
 
-Do not record raw responses, request headers, environment variables, wallet lists, keys, signatures, transaction hashes, or account identity.
+~~~powershell
+# Without saving a fixture:
+& $probe --node $node --cli-entry $cli --action follow-wallet
 
-## Observed rate-limit behavior — 2026-09-07
+# OR: use this instead of the command above when capturing a new shape.
+$capture = Join-Path (Resolve-Path ./tests/contract/fixtures/gmgn).Path 'follow_wallet_review.json'
+& $probe --node $node --cli-entry $cli --action follow-wallet --sanitized-fixture $capture
+~~~
 
-The following sanitized facts were observed using Node.js `24.12.0` and `gmgn-cli`
-`1.5.7`:
+The output file must be new and directly inside the fixture directory. The probe replaces
+values in memory before writing; object keys are retained and require manual privacy review.
+Never redirect raw CLI output to disk. Capture token shapes using `--action token-info`
+or `--action token-security` with `--token <public-bsc-address>`, each a separately
+authorized request. Preserve command, versions, date, sanitized category and shape;
+update parser tests when an observed contract changes.
 
-- `--action version` completed successfully.
-- `track follow-wallet --chain bsc --side buy --limit 1 --raw` reached GMGN and
-  received `HTTP 429` / `RATE_LIMIT_EXCEEDED` for the public IP.
-- GMGN included a reset time and remaining-cooldown text in stderr, and warned that
-  repeated requests may extend the cooldown.
-- After the CLI received that 429, the Node runtime asserted in `UV_HANDLE_CLOSING`
-  and exited with Windows status `0xC0000409`. This is treated as a CLI/runtime
-  failure after a GMGN rate-limit response, not as an authentication verdict.
+The probe prints safe process/byte/JSON summaries, not records or stable-ID overlap counts.
+The proposed overlap tool in the roadmap is needed for reproducible private comparisons.
 
-The probe and core client inspect only bounded captured output to classify this error.
-They do not display or persist the raw stderr. Further manual testing must wait for the
-reported reset and make a single request; see [human testing](human-testing.md).
-
-## Observed token-enrichment behavior — 2026-09-14
-
-Using the same pinned Node.js and CLI versions, the following sanitized facts were
-observed for one public BSC token contract:
-
-- `token-info` exited `0`, produced syntactically valid JSON, wrote no stderr, and
-  produced 4,833 bytes of stdout before sanitization.
-- `token-security` exited `0`, produced syntactically valid JSON, wrote no stderr,
-  and produced 762 bytes of stdout before sanitization.
-- Both fixture captures replace every value, retain only JSON structure and types, and
-  contain no raw token metadata, account data, or credentials.
-
-## Development-environment note
-
-The system Node executable is available, but its `npm` PowerShell shim is currently affected by a user-level npm prefix. Development commands should invoke the system npm CLI through Node with a workspace-local cache until that machine configuration is repaired:
-
-```text
-C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js --cache <workspace>\.cache\npm ...
-```
-
-This workaround is for local development only. The shipped application will invoke its own bundled `node.exe` and pinned CLI entry point directly.
+The optional [Test-LiveGmgn.ps1](../scripts/Test-LiveGmgn.ps1) wrapper requires
+`-EnableLiveGmgn`. It makes one feed request; supplying `-Token` adds info and security
+requests separated by two seconds. A missing configuration prints “skipped” and exits 0:
+that is **not** a live-test pass. Stop on any failure; do not chain further diagnostics.
